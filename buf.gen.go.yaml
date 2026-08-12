@@ -1,0 +1,36 @@
+# sdk/go/buf.gen.go.yaml — Go-only codegen for the Probe SDK.
+#
+# Deliberately NOT the repo-root buf.gen.yaml: this runs only the two Go plugins, sets
+# clean: false (so it never touches the committed gen/rust/ output), has no dependency on
+# the gitignored .tools/protoc-gen-elixir binary, and roots go_package_prefix at THIS
+# module so cross-file proto imports resolve to real on-disk packages.
+#
+# No proto under proto/ declares `option go_package`, so managed mode is the sole source of
+# the Go import path. decision.proto imports sentinel/model/v1/{event,filter}.proto, which
+# protoc-gen-go emits as a real Go import — the prefix must therefore equal the on-disk
+# import path inside sdk/go. The root template's prefix
+# (github.com/emet-labs/sentinel/gen/go) points at no directory and is produced under
+# clean: true into the gitignored, six-language .generated/ tree.
+#
+# Output is gitignored (/sdk/go/gen/). Generated Go is NEVER committed, mirroring
+# sdk/typescript's .generated/typescript/ pattern.
+version: v2
+clean: false
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/emet-labs/sentinel/sdk/go/gen
+inputs:
+  - directory: proto
+plugins:
+  # Same pin as the repo-root buf.gen.yaml; requires a google.golang.org/protobuf >= v1.36 runtime.
+  - remote: buf.build/protocolbuffers/go:v1.36.10
+    revision: 1
+    out: sdk/go/gen
+    opt: paths=source_relative
+  # Tracks the connectrpc.com/connect v1.20.0 runtime pinned in sdk/go/go.mod.
+  - remote: buf.build/connectrpc/go:v1.20.0
+    revision: 1
+    out: sdk/go/gen
+    opt: paths=source_relative
