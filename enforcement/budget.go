@@ -17,7 +17,10 @@ func RemainingTransportBudgetNs(deadlineNs, nowNs int64) uint64 {
 	return remaining
 }
 
-type budgetState struct { anchor int64; budget uint64 }
+type budgetState struct {
+	anchor int64
+	budget uint64
+}
 
 func monotonicDelta(from, to int64) (uint64, bool) {
 	delta := uint64(to) - uint64(from)
@@ -26,6 +29,8 @@ func monotonicDelta(from, to int64) (uint64, bool) {
 
 func (s budgetState) remaining(now int64) uint64 {
 	elapsed, valid := monotonicDelta(s.anchor, now)
-	if !valid || elapsed >= s.budget { return 0 }
+	if !valid || elapsed >= s.budget {
+		return 0
+	}
 	return s.budget - elapsed
 }

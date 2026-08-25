@@ -44,9 +44,9 @@ func makeSpec(
 			EventKinds:   kinds,
 			DeliveryMode: deliveryMode,
 		},
-		FailMode: failMode,
-		EvaluationMode: modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE,
-		Readiness: modelv1.Readiness_READINESS_ACTIVE,
+		FailMode:                 failMode,
+		EvaluationMode:           modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE,
+		Readiness:                modelv1.Readiness_READINESS_ACTIVE,
 		LatencyBudgetNanoseconds: u64(10000),
 	}
 }

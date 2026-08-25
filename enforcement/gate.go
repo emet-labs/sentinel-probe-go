@@ -177,7 +177,9 @@ func Gate(
 		if spec.LatencyBudgetNanoseconds == nil || spec.GetLatencyBudgetNanoseconds() == 0 {
 			return applyFailMode(aggregateFailMode, "budget-exhausted", filterEpoch, nil)
 		}
-		if spec.GetLatencyBudgetNanoseconds() < minimum { minimum = spec.GetLatencyBudgetNanoseconds() }
+		if spec.GetLatencyBudgetNanoseconds() < minimum {
+			minimum = spec.GetLatencyBudgetNanoseconds()
+		}
 	}
 	if deps.NowMonotonicNs == nil {
 		return applyFailMode(aggregateFailMode, "clock-unavailable", filterEpoch, nil)
@@ -185,8 +187,12 @@ func Gate(
 	anchor := deps.NowMonotonicNs()
 	if deadlineNs != nil {
 		caller, valid := monotonicDelta(anchor, *deadlineNs)
-		if !valid { caller = 0 }
-		if caller < minimum { minimum = caller }
+		if !valid {
+			caller = 0
+		}
+		if caller < minimum {
+			minimum = caller
+		}
 	}
 	state := budgetState{anchor: anchor, budget: minimum}
 
