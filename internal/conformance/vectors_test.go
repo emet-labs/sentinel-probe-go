@@ -2,14 +2,19 @@ package conformance
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 
 	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel/sdk/go/enforcement"
 	int128codec "github.com/emet-labs/sentinel/sdk/go/int128"
 	"github.com/emet-labs/sentinel/sdk/go/internal/specmatch"
 )
@@ -43,6 +48,34 @@ type matchCase struct {
 		Kind string `json:"kind"`
 	} `json:"producer_event"`
 	Expected bool `json:"expected"`
+}
+
+type gateCase struct {
+	ID     string `json:"id"`
+	Filter *struct {
+		Epoch          string `json:"epoch"`
+		Specifications []struct {
+			ID               string   `json:"id"`
+			EventKinds       []string `json:"event_kinds"`
+			DeliveryMode    string   `json:"delivery_mode"`
+			FailMode        string   `json:"fail_mode"`
+			AcceptedFailMode string  `json:"accepted_fail_mode"`
+		} `json:"specifications"`
+	} `json:"filter"`
+	Event struct {
+		Kind string `json:"kind"`
+	} `json:"event"`
+	LocalDeadlineNS *string  `json:"local_deadline_ns"`
+	ClockReadsNS    []string `json:"clock_reads_ns"`
+	Decider         struct {
+		Result string `json:"result"`
+	} `json:"decider"`
+	Expected struct {
+		Kind                       string  `json:"kind"`
+		Reason                     *string `json:"reason"`
+		DecideCalls                int     `json:"decide_calls"`
+		RemainingTransportBudgetNS *string `json:"remaining_transport_budget_ns"`
+	} `json:"expected"`
 }
 
 func fixtureRoot(t *testing.T) string {
@@ -168,4 +201,56 @@ func TestSpecMatchVectors(t *testing.T) {
 		}
 	}
 	unique(t, ids)
+}
+
+func TestEnforcementGateVectors(t *testing.T) {
+	var suite struct {
+		FormatVersion string     `json:"format_version"`
+		Kind          string     `json:"kind"`
+		Cases         []gateCase `json:"cases"`
+	}
+	decodeStrict(t, "enforcement-gate-v1.json", &suite)
+	for _, vector := range suite.Cases {
+		vector := vector
+		t.Run(vector.ID, func(t *testing.T) {
+			var filter *modelv1.EventFilter
+			accepted := map[string]modelv1.FailMode{}
+			if vector.Filter != nil {
+				epoch, err := strconv.ParseUint(vector.Filter.Epoch, 10, 63)
+				if err != nil { t.Fatal(err) }
+				filter = &modelv1.EventFilter{Epoch: &epoch}
+				for _, fixture := range vector.Filter.Specifications {
+					failMode := modelv1.FailMode_FAIL_MODE_OPEN
+					if fixture.FailMode == "closed" { failMode = modelv1.FailMode_FAIL_MODE_CLOSED }
+					acceptedMode := modelv1.FailMode_FAIL_MODE_OPEN
+					if fixture.AcceptedFailMode == "closed" { acceptedMode = modelv1.FailMode_FAIL_MODE_CLOSED }
+					accepted[fixture.ID] = acceptedMode
+					delivery := modelv1.DeliveryMode_DELIVERY_MODE_SHIP_ASYNC
+					if fixture.DeliveryMode == "ask_and_block" { delivery = modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK }
+					filter.Specifications = append(filter.Specifications, &modelv1.SpecificationFilter{SpecificationId: fixture.ID, FailMode: failMode, EventMatch: &modelv1.EventMatch{EventKinds: fixture.EventKinds, DeliveryMode: delivery}})
+				}
+			}
+			reads := make([]int64, len(vector.ClockReadsNS))
+			for index, raw := range vector.ClockReadsNS { value, err := strconv.ParseInt(raw, 10, 64); if err != nil { t.Fatal(err) }; reads[index] = value }
+			readIndex := 0
+			requests := make([]*probev1.DecideRequest, 0, 1)
+			deps := enforcement.Deps{
+				NowMonotonicNs: func() int64 { if readIndex >= len(reads) { t.Fatal("clock script exhausted") }; value := reads[readIndex]; readIndex++; return value },
+				AcceptedFailModeFor: func(spec *modelv1.SpecificationFilter) modelv1.FailMode { return accepted[spec.GetSpecificationId()] },
+				Decide: func(_ context.Context, request *probev1.DecideRequest) (*probev1.DecideResponse, error) {
+					requests = append(requests, request)
+					if vector.Decider.Result == "transport_error" { return nil, errors.New("fixture-transport-error") }
+					actions := map[string]probev1.DecisionAction{"permit": probev1.DecisionAction_DECISION_ACTION_PERMIT, "deny": probev1.DecisionAction_DECISION_ACTION_DENY, "defer": probev1.DecisionAction_DECISION_ACTION_DEFER, "unspecified": probev1.DecisionAction_DECISION_ACTION_UNSPECIFIED}
+					return &probev1.DecideResponse{Action: actions[vector.Decider.Result]}, nil
+				},
+			}
+			var deadline *int64
+			if vector.LocalDeadlineNS != nil { value, err := strconv.ParseInt(*vector.LocalDeadlineNS, 10, 64); if err != nil { t.Fatal(err) }; deadline = &value }
+			outcome := enforcement.Gate(context.Background(), &modelv1.ProducerEvent{Id: "fixture-event", Kind: vector.Event.Kind}, filter, deadline, deps, enforcement.Options{SourceHandle: "fixture-source", RequestID: "fixture-request", IdempotencyKey: "fixture-idempotency"})
+			if outcome.Kind.String() != vector.Expected.Kind { t.Errorf("kind = %s, want %s", outcome.Kind, vector.Expected.Kind) }
+			if len(requests) != vector.Expected.DecideCalls { t.Errorf("decide calls = %d, want %d", len(requests), vector.Expected.DecideCalls) }
+			if readIndex != len(reads) { t.Errorf("clock reads = %d, want %d", readIndex, len(reads)) }
+			if len(requests) == 1 && vector.Expected.RemainingTransportBudgetNS != nil { want, _ := strconv.ParseUint(*vector.Expected.RemainingTransportBudgetNS, 10, 64); if requests[0].GetRemainingTransportBudgetNanoseconds() != want { t.Errorf("remaining budget mismatch") } }
+		})
+	}
 }
