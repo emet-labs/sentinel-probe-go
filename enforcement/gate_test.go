@@ -760,3 +760,36 @@ func TestRemainingTransportBudgetNs(t *testing.T) {
 		}
 	}
 }
+
+func TestGateExcludesInactiveEnforcementEntries(t *testing.T) {
+	cases := []struct {
+		mode      modelv1.EvaluationMode
+		readiness modelv1.Readiness
+	}{
+		{modelv1.EvaluationMode_EVALUATION_MODE_SHADOW, modelv1.Readiness_READINESS_ACTIVE},
+		{modelv1.EvaluationMode_EVALUATION_MODE_DETECT, modelv1.Readiness_READINESS_ACTIVE},
+		{modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE, modelv1.Readiness_READINESS_WARMING},
+	}
+	for _, tc := range cases {
+		spec := closedAskAndBlockSpec()
+		spec.EvaluationMode, spec.Readiness = tc.mode, tc.readiness
+		mock := &mockDecider{}
+		outcome := enforcement.Gate(t.Context(), makeEvent(testKind), makeFilter(u64(testEpoch), spec), nil, makeDeps(mock, 0, alwaysClosed), testOptions)
+		if outcome.Kind != enforcement.OutcomePermit || mock.callCount() != 0 {
+			t.Fatalf("inactive entry produced %v and %d calls", outcome.Kind, mock.callCount())
+		}
+	}
+}
+
+func TestGateMissingEligibleBudgetExhaustsWithoutClockOrDecide(t *testing.T) {
+	spec := askAndBlockSpec()
+	spec.LatencyBudgetNanoseconds = nil
+	clockCalls := 0
+	mock := &mockDecider{}
+	deps := makeDeps(mock, 0, nil)
+	deps.NowMonotonicNs = func() int64 { clockCalls++; return 0 }
+	outcome := enforcement.Gate(t.Context(), makeEvent(testKind), makeFilter(u64(testEpoch), spec), nil, deps, testOptions)
+	if outcome.Kind != enforcement.OutcomeFailOpenPermit || clockCalls != 0 || mock.callCount() != 0 {
+		t.Fatalf("outcome=%v clock=%d decide=%d", outcome.Kind, clockCalls, mock.callCount())
+	}
+}
