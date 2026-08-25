@@ -783,6 +783,94 @@ func TestGateExcludesInactiveEnforcementEntries(t *testing.T) {
 	}
 }
 
+// TestGateEffectiveBudgetIsMinimumAcrossEligibleSpecs is the behavior issue #113 is named for:
+// with two-or-more eligible Specifications carrying different positive budgets, the effective
+// (wire) budget must be the smallest one, not the largest and not merely "a" budget.
+func TestGateEffectiveBudgetIsMinimumAcrossEligibleSpecs(t *testing.T) {
+	t.Parallel()
+
+	specA := makeSpec("spec-a", []string{testKind}, modelv1.FailMode_FAIL_MODE_OPEN, modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK)
+	specA.LatencyBudgetNanoseconds = u64(50000)
+	specB := makeSpec("spec-b", []string{testKind}, modelv1.FailMode_FAIL_MODE_OPEN, modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK)
+	specB.LatencyBudgetNanoseconds = u64(8000)
+	specC := makeSpec("spec-c", []string{testKind}, modelv1.FailMode_FAIL_MODE_OPEN, modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK)
+	specC.LatencyBudgetNanoseconds = u64(20000)
+
+	mock := &mockDecider{response: makeResponse(probev1.DecisionAction_DECISION_ACTION_PERMIT)}
+	outcome := enforcement.Gate(t.Context(), makeEvent(testKind),
+		makeFilter(u64(testEpoch), specA, specB, specC), nil, makeDeps(mock, 0, nil), testOptions)
+
+	if outcome.Kind != enforcement.OutcomePermit {
+		t.Fatalf("Kind = %v, want permit", outcome.Kind)
+	}
+	if got := mock.lastRequest().GetRemainingTransportBudgetNanoseconds(); got != 8000 {
+		t.Fatalf("remaining budget = %d, want the minimum eligible budget 8000", got)
+	}
+}
+
+// TestGateDeferGatedByMinimumSpecBudgetNotLargest proves the minimum, not the maximum, gates
+// the DEFER timeout: the clock advances past the smaller of two eligible budgets but not past
+// the larger one, and the fail mode must still fire.
+func TestGateDeferGatedByMinimumSpecBudgetNotLargest(t *testing.T) {
+	t.Parallel()
+
+	specA := makeSpec("spec-a", []string{testKind}, modelv1.FailMode_FAIL_MODE_OPEN, modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK)
+	specA.LatencyBudgetNanoseconds = u64(20000)
+	specB := makeSpec("spec-b", []string{testKind}, modelv1.FailMode_FAIL_MODE_OPEN, modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK)
+	specB.LatencyBudgetNanoseconds = u64(5000)
+
+	mock := &mockDecider{response: makeResponse(probev1.DecisionAction_DECISION_ACTION_DEFER)}
+	deps := makeDeps(mock, 0, nil)
+	calls := 0
+	deps.NowMonotonicNs = func() int64 {
+		calls++
+		if calls <= 2 {
+			return 0 // anchor + pre-call check: budget remains
+		}
+		return 5000 // post-response check: past the smaller budget, not the larger one
+	}
+
+	outcome := enforcement.Gate(t.Context(), makeEvent(testKind),
+		makeFilter(u64(testEpoch), specA, specB), nil, deps, testOptions)
+
+	if outcome.Kind != enforcement.OutcomeFailOpenPermit {
+		t.Fatalf("Kind = %v, want fail-open-permit: the minimum eligible budget must gate the timeout, not the largest", outcome.Kind)
+	}
+	if outcome.Reason != "defer-budget-exhausted" {
+		t.Fatalf("Reason = %q", outcome.Reason)
+	}
+}
+
+// TestGateWithoutCallerDeadlineDeferTimesOutOnceSpecBudgetIsExhausted: no caller deadline is
+// required for a Specification's own latency budget to eventually time out a DEFER.
+func TestGateWithoutCallerDeadlineDeferTimesOutOnceSpecBudgetIsExhausted(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDecider{response: makeResponse(probev1.DecisionAction_DECISION_ACTION_DEFER)}
+	deps := makeDeps(mock, 0, nil)
+	calls := 0
+	deps.NowMonotonicNs = func() int64 {
+		calls++
+		if calls <= 2 {
+			return 0 // at entry: budget remains, so the ask happens
+		}
+		return 10000 // after the response: the Specification's 10000ns budget is gone
+	}
+
+	outcome := enforcement.Gate(t.Context(), makeEvent(testKind),
+		makeFilter(u64(testEpoch), askAndBlockSpec()), nil, deps, testOptions)
+
+	if outcome.Kind != enforcement.OutcomeFailOpenPermit {
+		t.Fatalf("Kind = %v, want fail-open-permit", outcome.Kind)
+	}
+	if outcome.Reason != "defer-budget-exhausted" {
+		t.Fatalf("Reason = %q", outcome.Reason)
+	}
+	if mock.callCount() != 1 {
+		t.Fatalf("callCount = %d, want 1 — the ask happened before the Specification budget ran out", mock.callCount())
+	}
+}
+
 func TestGateMissingEligibleBudgetExhaustsWithoutClockOrDecide(t *testing.T) {
 	spec := askAndBlockSpec()
 	spec.LatencyBudgetNanoseconds = nil
