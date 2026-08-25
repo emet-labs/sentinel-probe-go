@@ -58,6 +58,9 @@ type gateCase struct {
 			ID               string   `json:"id"`
 			EventKinds       []string `json:"event_kinds"`
 			DeliveryMode    string   `json:"delivery_mode"`
+			EvaluationMode  string   `json:"evaluation_mode"`
+			Readiness       string   `json:"readiness"`
+			LatencyBudgetNS string   `json:"latency_budget_ns"`
 			FailMode        string   `json:"fail_mode"`
 			AcceptedFailMode string  `json:"accepted_fail_mode"`
 		} `json:"specifications"`
@@ -227,7 +230,8 @@ func TestEnforcementGateVectors(t *testing.T) {
 					accepted[fixture.ID] = acceptedMode
 					delivery := modelv1.DeliveryMode_DELIVERY_MODE_SHIP_ASYNC
 					if fixture.DeliveryMode == "ask_and_block" { delivery = modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK }
-					filter.Specifications = append(filter.Specifications, &modelv1.SpecificationFilter{SpecificationId: fixture.ID, FailMode: failMode, EventMatch: &modelv1.EventMatch{EventKinds: fixture.EventKinds, DeliveryMode: delivery}})
+					budget, err := strconv.ParseUint(fixture.LatencyBudgetNS, 10, 64); if err != nil { t.Fatal(err) }
+					filter.Specifications = append(filter.Specifications, &modelv1.SpecificationFilter{SpecificationId: fixture.ID, FailMode: failMode, EvaluationMode: modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE, Readiness: modelv1.Readiness_READINESS_ACTIVE, LatencyBudgetNanoseconds: &budget, EventMatch: &modelv1.EventMatch{EventKinds: fixture.EventKinds, DeliveryMode: delivery}})
 				}
 			}
 			reads := make([]int64, len(vector.ClockReadsNS))
