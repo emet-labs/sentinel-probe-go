@@ -752,6 +752,8 @@ func TestRemainingTransportBudgetNs(t *testing.T) {
 		{"deadline passed", 10000, 99999, 0},
 		{"full budget", 10000, 0, 10000},
 		{"negative clock origin", 0, -5000, 5000},
+		{"signed boundary wrap", -9223372036854775804, 9223372036854775802, 10},
+		{"ambiguous half range", -9223372036854775808, 0, 0},
 	}
 	for _, tc := range cases {
 		if got := enforcement.RemainingTransportBudgetNs(tc.deadline, tc.now); got != tc.want {
