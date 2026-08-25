@@ -450,7 +450,7 @@ func TestGateBudgetComesFromTheInjectedClock(t *testing.T) {
 	}
 }
 
-func TestGateWithoutBudgetPermits(t *testing.T) {
+func TestGateWithoutCallerBudgetUsesSpecificationBudget(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockDecider{response: makeResponse(probev1.DecisionAction_DECISION_ACTION_PERMIT)}
@@ -460,13 +460,12 @@ func TestGateWithoutBudgetPermits(t *testing.T) {
 	if outcome.Kind != enforcement.OutcomePermit {
 		t.Fatalf("Kind = %v, want permit", outcome.Kind)
 	}
-	if mock.lastRequest().RemainingTransportBudgetNanoseconds != nil {
-		t.Fatal("an absent latency budget must leave the field absent, not zero")
+	if got := mock.lastRequest().GetRemainingTransportBudgetNanoseconds(); got != 10000 {
+		t.Fatalf("remaining budget = %d, want Specification budget 10000", got)
 	}
 }
 
-// TestGateWithoutBudgetDefersIndefinitely: no declared latency budget means no timeout path.
-func TestGateWithoutBudgetDefersIndefinitely(t *testing.T) {
+func TestGateWithoutCallerBudgetDefersWhileSpecificationBudgetRemains(t *testing.T) {
 	t.Parallel()
 
 	mock := &mockDecider{response: makeResponse(probev1.DecisionAction_DECISION_ACTION_DEFER)}
