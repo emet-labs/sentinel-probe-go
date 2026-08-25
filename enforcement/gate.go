@@ -162,7 +162,7 @@ func Gate(
 	// 2. Enforcing set: selects the event AND asks-and-blocks.
 	var enforcing []*modelv1.SpecificationFilter
 	for _, spec := range filter.GetSpecifications() {
-		if specmatch.Selects(spec, event) && isAskAndBlock(spec) {
+		if specmatch.Selects(spec, event) && isEnforceable(spec) {
 			enforcing = append(enforcing, spec)
 		}
 	}
@@ -172,17 +172,31 @@ func Gate(
 
 	// 3. Aggregate fail mode: fail-closed wins.
 	aggregateFailMode := computeAggregateFailMode(enforcing, deps)
+	minimum := ^uint64(0)
+	for _, spec := range enforcing {
+		if spec.LatencyBudgetNanoseconds == nil || spec.GetLatencyBudgetNanoseconds() == 0 {
+			return applyFailMode(aggregateFailMode, "budget-exhausted", filterEpoch, nil)
+		}
+		if spec.GetLatencyBudgetNanoseconds() < minimum { minimum = spec.GetLatencyBudgetNanoseconds() }
+	}
+	if deps.NowMonotonicNs == nil {
+		return applyFailMode(aggregateFailMode, "clock-unavailable", filterEpoch, nil)
+	}
+	anchor := deps.NowMonotonicNs()
+	if deadlineNs != nil {
+		caller, valid := monotonicDelta(anchor, *deadlineNs)
+		if !valid { caller = 0 }
+		if caller < minimum { minimum = caller }
+	}
+	state := budgetState{anchor: anchor, budget: minimum}
 
 	// 4. Budget. Exhausted before the call means apply the fail mode without asking, so a
 	//    Probe that is already out of time does not spend more of it.
-	var remainingBudget *uint64
-	if deadlineNs != nil {
-		remaining := RemainingTransportBudgetNs(*deadlineNs, deps.NowMonotonicNs())
-		if remaining == 0 {
-			return applyFailMode(aggregateFailMode, "budget-exhausted", filterEpoch, nil)
-		}
-		remainingBudget = &remaining
+	remaining := state.remaining(deps.NowMonotonicNs())
+	if remaining == 0 {
+		return applyFailMode(aggregateFailMode, "budget-exhausted", filterEpoch, nil)
 	}
+	remainingBudget := &remaining
 
 	// 5. Build the request from the already-projected event.
 	request := &probev1.DecideRequest{
@@ -208,14 +222,14 @@ func Gate(
 	}
 
 	// 7. Honour the answer.
-	return handleResponse(response, aggregateFailMode, filterEpoch, deadlineNs, deps)
+	return handleResponse(response, aggregateFailMode, filterEpoch, state, deps)
 }
 
 func handleResponse(
 	response *probev1.DecideResponse,
 	aggregateFailMode modelv1.FailMode,
 	filterEpoch *uint64,
-	deadlineNs *int64,
+	state budgetState,
 	deps Deps,
 ) GateOutcome {
 	decisions := response.GetSpecifications()
@@ -228,11 +242,7 @@ func handleResponse(
 		return GateOutcome{Kind: OutcomeDeny, Reason: "deny", FilterEpoch: filterEpoch, Specifications: decisions}
 
 	case probev1.DecisionAction_DECISION_ACTION_DEFER:
-		if deadlineNs == nil {
-			// No latency budget was declared, so there is no timeout path: defer indefinitely.
-			return GateOutcome{Kind: OutcomeDefer, Reason: "defer", FilterEpoch: filterEpoch, Specifications: decisions}
-		}
-		if RemainingTransportBudgetNs(*deadlineNs, deps.NowMonotonicNs()) > 0 {
+		if state.remaining(deps.NowMonotonicNs()) > 0 {
 			return GateOutcome{Kind: OutcomeDefer, Reason: "defer", FilterEpoch: filterEpoch, Specifications: decisions}
 		}
 		return applyFailMode(aggregateFailMode, "defer-budget-exhausted", filterEpoch, decisions)
@@ -285,8 +295,10 @@ func computeAggregateFailMode(enforcing []*modelv1.SpecificationFilter, deps Dep
 	return modelv1.FailMode_FAIL_MODE_OPEN
 }
 
-func isAskAndBlock(spec *modelv1.SpecificationFilter) bool {
-	return spec.GetEventMatch().GetDeliveryMode() == modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK
+func isEnforceable(spec *modelv1.SpecificationFilter) bool {
+	return spec.GetEventMatch().GetDeliveryMode() == modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK &&
+		spec.GetEvaluationMode() == modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE &&
+		spec.GetReadiness() == modelv1.Readiness_READINESS_ACTIVE
 }
 
 // describeError renders a transport failure for the audit record, distinguishing a context

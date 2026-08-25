@@ -10,9 +10,22 @@ package enforcement
 // Pure: no clock access, no side effects. The clock is injected through Deps.NowMonotonicNs
 // and never read inside, so budget behaviour is testable without sleeping.
 func RemainingTransportBudgetNs(deadlineNs, nowNs int64) uint64 {
-	remaining := deadlineNs - nowNs
-	if remaining <= 0 {
+	remaining, valid := monotonicDelta(nowNs, deadlineNs)
+	if !valid {
 		return 0
 	}
-	return uint64(remaining)
+	return remaining
+}
+
+type budgetState struct { anchor int64; budget uint64 }
+
+func monotonicDelta(from, to int64) (uint64, bool) {
+	delta := uint64(to) - uint64(from)
+	return delta, delta < 1<<63
+}
+
+func (s budgetState) remaining(now int64) uint64 {
+	elapsed, valid := monotonicDelta(s.anchor, now)
+	if !valid || elapsed >= s.budget { return 0 }
+	return s.budget - elapsed
 }
