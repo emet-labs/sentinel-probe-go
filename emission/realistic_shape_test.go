@@ -95,6 +95,7 @@ func chargeSpan(t *testing.T) sdktrace.ReadOnlySpan {
 // about order state transitions could need.
 func chargeFilter() *modelv1.EventFilter {
 	epoch := realisticEpoch
+	budget := uint64(10_000)
 	return &modelv1.EventFilter{
 		Epoch: &epoch,
 		Specifications: []*modelv1.SpecificationFilter{{
@@ -107,7 +108,10 @@ func chargeFilter() *modelv1.EventFilter {
 				},
 				DeliveryMode: modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK,
 			},
-			FailMode: modelv1.FailMode_FAIL_MODE_CLOSED,
+			FailMode:                 modelv1.FailMode_FAIL_MODE_CLOSED,
+			LatencyBudgetNanoseconds: &budget,
+			EvaluationMode:           modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE,
+			Readiness:                modelv1.Readiness_READINESS_ACTIVE,
 		}},
 	}
 }
