@@ -9,6 +9,11 @@ package enforcement
 //
 // Pure: no clock access, no side effects. The clock is injected through Deps.NowMonotonicNs
 // and never read inside, so budget behaviour is testable without sleeping.
+//
+// Deprecated: not called from Gate since the effective budget became a minimum over an
+// anchor+relative-budget pair (budgetState, below) rather than a single absolute deadline.
+// Kept for API stability and exercised only by its own unit test; new code should use
+// budgetState.remaining.
 func RemainingTransportBudgetNs(deadlineNs, nowNs int64) uint64 {
 	remaining, valid := monotonicDelta(nowNs, deadlineNs)
 	if !valid {
