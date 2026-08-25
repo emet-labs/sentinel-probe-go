@@ -8,13 +8,14 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"testing"
 
+	"github.com/emet-labs/sentinel/sdk/go/enforcement"
 	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
 	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
 	int128codec "github.com/emet-labs/sentinel/sdk/go/int128"
 	"github.com/emet-labs/sentinel/sdk/go/internal/specmatch"
 )
@@ -39,7 +40,7 @@ type matchCase struct {
 	SpecificationFilter struct {
 		EventMatch *struct {
 			EventKinds             []string `json:"event_kinds"`
-			DeliveryMode          string   `json:"delivery_mode"`
+			DeliveryMode           string   `json:"delivery_mode"`
 			ProjectedAttributeKeys []string `json:"projected_attribute_keys"`
 		} `json:"event_match"`
 		FailMode string `json:"fail_mode"`
@@ -57,12 +58,12 @@ type gateCase struct {
 		Specifications []struct {
 			ID               string   `json:"id"`
 			EventKinds       []string `json:"event_kinds"`
-			DeliveryMode    string   `json:"delivery_mode"`
-			EvaluationMode  string   `json:"evaluation_mode"`
-			Readiness       string   `json:"readiness"`
-			LatencyBudgetNS string   `json:"latency_budget_ns"`
-			FailMode        string   `json:"fail_mode"`
-			AcceptedFailMode string  `json:"accepted_fail_mode"`
+			DeliveryMode     string   `json:"delivery_mode"`
+			EvaluationMode   string   `json:"evaluation_mode"`
+			Readiness        string   `json:"readiness"`
+			LatencyBudgetNS  string   `json:"latency_budget_ns"`
+			FailMode         string   `json:"fail_mode"`
+			AcceptedFailMode string   `json:"accepted_fail_mode"`
 		} `json:"specifications"`
 	} `json:"filter"`
 	Event struct {
@@ -178,6 +179,84 @@ func TestManifestSuiteRegistryFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMalformedCorpusRejectedByCategory(t *testing.T) {
+	var manifest struct {
+		FormatVersion string            `json:"format_version"`
+		Suites        []json.RawMessage `json:"suites"`
+		Malformed     []struct {
+			Path     string `json:"path"`
+			Category string `json:"rejection_category"`
+		} `json:"malformed"`
+	}
+	decodeStrict(t, "manifest-v1.json", &manifest)
+	for _, fixture := range manifest.Malformed {
+		if got := classifyMalformed(t, fixture.Path); got != fixture.Category {
+			t.Errorf("%s: category = %s, want %s", fixture.Path, got, fixture.Category)
+		}
+	}
+}
+
+func classifyMalformed(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(fixtureRoot(t), path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(data, []byte(`"kind"`)) > 1 {
+		return "duplicate-key"
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return "syntax"
+	}
+	if raw, ok := top["format_version"]; !ok {
+		return "missing-field"
+	} else {
+		var v string
+		_ = json.Unmarshal(raw, &v)
+		if v != version {
+			return "version"
+		}
+	}
+	for key := range top {
+		if key != "format_version" && key != "kind" && key != "cases" {
+			return "unknown-field"
+		}
+	}
+	if _, ok := top["cases"]; !ok {
+		return "missing-field"
+	}
+	var kind string
+	_ = json.Unmarshal(top["kind"], &kind)
+	if kind != "int128" && kind != "spec_match" && kind != "enforcement_gate" {
+		return "unknown-token"
+	}
+	if kind == "int128" {
+		var cases []intCase
+		if err := json.Unmarshal(top["cases"], &cases); err != nil {
+			return "schema"
+		}
+		canonical := regexp.MustCompile(`^(0|-?[1-9][0-9]*)$`)
+		seen := map[string]bool{}
+		min, _ := new(big.Int).SetString("-170141183460469231731687303715884105728", 10)
+		max, _ := new(big.Int).SetString("170141183460469231731687303715884105727", 10)
+		for _, item := range cases {
+			if seen[item.ID] {
+				return "duplicate-id"
+			}
+			seen[item.ID] = true
+			if !canonical.MatchString(item.Value) || !canonical.MatchString(item.High) || !canonical.MatchString(item.Low) {
+				return "integer-lexeme"
+			}
+			value, _ := new(big.Int).SetString(item.Value, 10)
+			if value.Cmp(min) < 0 || value.Cmp(max) > 0 {
+				return "integer-range"
+			}
+		}
+	}
+	return "accepted"
+}
+
 func TestSpecMatchVectors(t *testing.T) {
 	var suite struct {
 		FormatVersion string      `json:"format_version"`
@@ -220,41 +299,84 @@ func TestEnforcementGateVectors(t *testing.T) {
 			accepted := map[string]modelv1.FailMode{}
 			if vector.Filter != nil {
 				epoch, err := strconv.ParseUint(vector.Filter.Epoch, 10, 63)
-				if err != nil { t.Fatal(err) }
+				if err != nil {
+					t.Fatal(err)
+				}
 				filter = &modelv1.EventFilter{Epoch: &epoch}
 				for _, fixture := range vector.Filter.Specifications {
 					failMode := modelv1.FailMode_FAIL_MODE_OPEN
-					if fixture.FailMode == "closed" { failMode = modelv1.FailMode_FAIL_MODE_CLOSED }
+					if fixture.FailMode == "closed" {
+						failMode = modelv1.FailMode_FAIL_MODE_CLOSED
+					}
 					acceptedMode := modelv1.FailMode_FAIL_MODE_OPEN
-					if fixture.AcceptedFailMode == "closed" { acceptedMode = modelv1.FailMode_FAIL_MODE_CLOSED }
+					if fixture.AcceptedFailMode == "closed" {
+						acceptedMode = modelv1.FailMode_FAIL_MODE_CLOSED
+					}
 					accepted[fixture.ID] = acceptedMode
 					delivery := modelv1.DeliveryMode_DELIVERY_MODE_SHIP_ASYNC
-					if fixture.DeliveryMode == "ask_and_block" { delivery = modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK }
-					budget, err := strconv.ParseUint(fixture.LatencyBudgetNS, 10, 64); if err != nil { t.Fatal(err) }
+					if fixture.DeliveryMode == "ask_and_block" {
+						delivery = modelv1.DeliveryMode_DELIVERY_MODE_ASK_AND_BLOCK
+					}
+					budget, err := strconv.ParseUint(fixture.LatencyBudgetNS, 10, 64)
+					if err != nil {
+						t.Fatal(err)
+					}
 					filter.Specifications = append(filter.Specifications, &modelv1.SpecificationFilter{SpecificationId: fixture.ID, FailMode: failMode, EvaluationMode: modelv1.EvaluationMode_EVALUATION_MODE_ENFORCE, Readiness: modelv1.Readiness_READINESS_ACTIVE, LatencyBudgetNanoseconds: &budget, EventMatch: &modelv1.EventMatch{EventKinds: fixture.EventKinds, DeliveryMode: delivery}})
 				}
 			}
 			reads := make([]int64, len(vector.ClockReadsNS))
-			for index, raw := range vector.ClockReadsNS { value, err := strconv.ParseInt(raw, 10, 64); if err != nil { t.Fatal(err) }; reads[index] = value }
+			for index, raw := range vector.ClockReadsNS {
+				value, err := strconv.ParseInt(raw, 10, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reads[index] = value
+			}
 			readIndex := 0
 			requests := make([]*probev1.DecideRequest, 0, 1)
 			deps := enforcement.Deps{
-				NowMonotonicNs: func() int64 { if readIndex >= len(reads) { t.Fatal("clock script exhausted") }; value := reads[readIndex]; readIndex++; return value },
+				NowMonotonicNs: func() int64 {
+					if readIndex >= len(reads) {
+						t.Fatal("clock script exhausted")
+					}
+					value := reads[readIndex]
+					readIndex++
+					return value
+				},
 				AcceptedFailModeFor: func(spec *modelv1.SpecificationFilter) modelv1.FailMode { return accepted[spec.GetSpecificationId()] },
 				Decide: func(_ context.Context, request *probev1.DecideRequest) (*probev1.DecideResponse, error) {
 					requests = append(requests, request)
-					if vector.Decider.Result == "transport_error" { return nil, errors.New("fixture-transport-error") }
+					if vector.Decider.Result == "transport_error" {
+						return nil, errors.New("fixture-transport-error")
+					}
 					actions := map[string]probev1.DecisionAction{"permit": probev1.DecisionAction_DECISION_ACTION_PERMIT, "deny": probev1.DecisionAction_DECISION_ACTION_DENY, "defer": probev1.DecisionAction_DECISION_ACTION_DEFER, "unspecified": probev1.DecisionAction_DECISION_ACTION_UNSPECIFIED}
 					return &probev1.DecideResponse{Action: actions[vector.Decider.Result]}, nil
 				},
 			}
 			var deadline *int64
-			if vector.LocalDeadlineNS != nil { value, err := strconv.ParseInt(*vector.LocalDeadlineNS, 10, 64); if err != nil { t.Fatal(err) }; deadline = &value }
+			if vector.LocalDeadlineNS != nil {
+				value, err := strconv.ParseInt(*vector.LocalDeadlineNS, 10, 64)
+				if err != nil {
+					t.Fatal(err)
+				}
+				deadline = &value
+			}
 			outcome := enforcement.Gate(context.Background(), &modelv1.ProducerEvent{Id: "fixture-event", Kind: vector.Event.Kind}, filter, deadline, deps, enforcement.Options{SourceHandle: "fixture-source", RequestID: "fixture-request", IdempotencyKey: "fixture-idempotency"})
-			if outcome.Kind.String() != vector.Expected.Kind { t.Errorf("kind = %s, want %s", outcome.Kind, vector.Expected.Kind) }
-			if len(requests) != vector.Expected.DecideCalls { t.Errorf("decide calls = %d, want %d", len(requests), vector.Expected.DecideCalls) }
-			if readIndex != len(reads) { t.Errorf("clock reads = %d, want %d", readIndex, len(reads)) }
-			if len(requests) == 1 && vector.Expected.RemainingTransportBudgetNS != nil { want, _ := strconv.ParseUint(*vector.Expected.RemainingTransportBudgetNS, 10, 64); if requests[0].GetRemainingTransportBudgetNanoseconds() != want { t.Errorf("remaining budget mismatch") } }
+			if outcome.Kind.String() != vector.Expected.Kind {
+				t.Errorf("kind = %s, want %s", outcome.Kind, vector.Expected.Kind)
+			}
+			if len(requests) != vector.Expected.DecideCalls {
+				t.Errorf("decide calls = %d, want %d", len(requests), vector.Expected.DecideCalls)
+			}
+			if readIndex != len(reads) {
+				t.Errorf("clock reads = %d, want %d", readIndex, len(reads))
+			}
+			if len(requests) == 1 && vector.Expected.RemainingTransportBudgetNS != nil {
+				want, _ := strconv.ParseUint(*vector.Expected.RemainingTransportBudgetNS, 10, 64)
+				if requests[0].GetRemainingTransportBudgetNanoseconds() != want {
+					t.Errorf("remaining budget mismatch")
+				}
+			}
 		})
 	}
 }
