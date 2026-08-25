@@ -121,6 +121,27 @@ func TestInt128Vectors(t *testing.T) {
 	unique(t, ids)
 }
 
+func TestManifestSuiteRegistryFailsClosed(t *testing.T) {
+	var manifest struct {
+		FormatVersion string `json:"format_version"`
+		Suites        []struct {
+			Kind string `json:"kind"`
+			Path string `json:"path"`
+		} `json:"suites"`
+		Malformed []json.RawMessage `json:"malformed"`
+	}
+	decodeStrict(t, "manifest-v1.json", &manifest)
+	want := []string{"spec_match:spec-match-v1.json", "int128:int128-v1.json", "enforcement_gate:enforcement-gate-v1.json"}
+	if manifest.FormatVersion != version || len(manifest.Suites) != len(want) {
+		t.Fatal("unsupported manifest")
+	}
+	for index, entry := range manifest.Suites {
+		if entry.Kind+":"+entry.Path != want[index] {
+			t.Fatalf("unknown manifest suite at %d", index)
+		}
+	}
+}
+
 func TestSpecMatchVectors(t *testing.T) {
 	var suite struct {
 		FormatVersion string      `json:"format_version"`
