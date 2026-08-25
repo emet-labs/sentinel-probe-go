@@ -152,7 +152,7 @@ func TestGateDeferBudgetExhaustedFailsOpen(t *testing.T) {
 	calls := 0
 	deps.NowMonotonicNs = func() int64 {
 		calls++
-		if calls == 1 {
+		if calls <= 2 {
 			return 0 // at entry: budget remains, so the ask happens
 		}
 		return 10000 // after the response: budget is gone
@@ -180,7 +180,7 @@ func TestGateDeferBudgetExhaustedFailsClosedWhenContracted(t *testing.T) {
 	calls := 0
 	deps.NowMonotonicNs = func() int64 {
 		calls++
-		if calls == 1 {
+		if calls <= 2 {
 			return 0
 		}
 		return 10000
