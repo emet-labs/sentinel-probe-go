@@ -242,8 +242,8 @@ func TestGateFailClosedRequiresAnAcceptedContract(t *testing.T) {
 // absence WEAKENS enforcement — a deployment that wires up Decide and forgets this one would
 // get a gate that can never fail closed, with no signal at all. Nil Decide and nil
 // NowMonotonicNs already panic; this makes the third consistent with them, and with the
-// reference, which computes the aggregate fail mode outside its try/catch
-// (enforcement-gate.ts:82, before the try at :108) so a missing implementation throws.
+// reference, which computes the aggregate fail mode before it enters any try, so a missing
+// implementation throws there too.
 func TestGateNilAcceptedFailModeForPanics(t *testing.T) {
 	t.Parallel()
 
@@ -882,4 +882,50 @@ func TestGateMissingEligibleBudgetExhaustsWithoutClockOrDecide(t *testing.T) {
 	if outcome.Kind != enforcement.OutcomeFailOpenPermit || clockCalls != 0 || mock.callCount() != 0 {
 		t.Fatalf("outcome=%v clock=%d decide=%d", outcome.Kind, clockCalls, mock.callCount())
 	}
+}
+
+// TestGatePanickingClockPropagates: issue #123 asked whether an injected monotonic clock that
+// FAILS (as opposed to one that is missing) should degrade to the aggregate fail mode with
+// reason "clock-unavailable", or surface. The maintainer ruling on PR #127 is that it
+// surfaces: a clock that is wired up but cannot be read is a caller bug, and there is no
+// real-world scenario that makes it worth absorbing. Go has always propagated -- it never
+// recovers -- so this pins existing behaviour rather than changing it. Five of the six SDKs
+// had no coverage at all here, which is exactly how the ports drifted apart in the first
+// place; TypeScript's outlier catch is removed in the same change.
+//
+// The read exercised is the third and last one, after the DEFER response, so the panic has to
+// travel back out through the response handler rather than merely out of the entry path.
+func TestGatePanickingClockPropagates(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockDecider{response: makeResponse(probev1.DecisionAction_DECISION_ACTION_DEFER)}
+	deps := makeDeps(mock, 0, nil)
+	clockCalls := 0
+	deps.NowMonotonicNs = func() int64 {
+		clockCalls++
+		if clockCalls == 3 {
+			panic("clock hardware fault")
+		}
+		return 0
+	}
+
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("a panicking monotonic clock must propagate, not degrade to clock-unavailable")
+		}
+		message, ok := recovered.(string)
+		if !ok || message != "clock hardware fault" {
+			t.Fatalf("panic value = %v, want the clock's own panic", recovered)
+		}
+		if clockCalls != 3 {
+			t.Fatalf("clockCalls = %d, want 3: anchor, pre-call budget, post-DEFER re-check", clockCalls)
+		}
+		if mock.callCount() != 1 {
+			t.Fatalf("callCount = %d, want 1: the ask happened before the failing read", mock.callCount())
+		}
+	}()
+
+	enforcement.Gate(t.Context(), makeEvent(testKind),
+		makeFilter(u64(testEpoch), askAndBlockSpec()), i64(10000), deps, testOptions)
 }

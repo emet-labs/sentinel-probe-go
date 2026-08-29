@@ -112,8 +112,8 @@ type Deps struct {
 	// whose absence silently WEAKENS enforcement: a deployment that wires up Decide and
 	// forgets this one would get a gate that can never fail closed, with no signal at all.
 	// The TypeScript reference makes the field required and computes the aggregate fail mode
-	// outside its try/catch (enforcement-gate.ts:82, before the try at :108), so a missing
-	// implementation throws to the caller there too rather than permitting.
+	// before it enters any try, so a missing implementation throws to the caller there too
+	// rather than permitting.
 	AcceptedFailModeFor func(spec *modelv1.SpecificationFilter) modelv1.FailMode
 }
 
