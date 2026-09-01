@@ -3,8 +3,8 @@ package specmatch_test
 import (
 	"testing"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	"github.com/emet-labs/sentinel/sdk/go/internal/specmatch"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/internal/specmatch"
 )
 
 func TestSelects(t *testing.T) {

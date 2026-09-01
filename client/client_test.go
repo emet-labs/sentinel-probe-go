@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"testing"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 const testBaseURL = "http://sentinel.local:7070"

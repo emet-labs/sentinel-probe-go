@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package sentinel.model.v1;
+
+import "sentinel/model/v1/common.proto";
+
+enum FailMode {
+  FAIL_MODE_UNSPECIFIED = 0;
+  FAIL_MODE_OPEN = 1;
+  FAIL_MODE_CLOSED = 2;
+}
+
+enum EvaluationMode {
+  EVALUATION_MODE_UNSPECIFIED = 0;
+  EVALUATION_MODE_SHADOW = 1;
+  EVALUATION_MODE_DETECT = 2;
+  EVALUATION_MODE_ENFORCE = 3;
+}
+
+enum Readiness {
+  READINESS_UNSPECIFIED = 0;
+  READINESS_WARMING = 1;
+  READINESS_ACTIVE = 2;
+}
+
+enum DeliveryMode {
+  DELIVERY_MODE_UNSPECIFIED = 0;
+  DELIVERY_MODE_SHIP_ASYNC = 1;
+  DELIVERY_MODE_ASK_AND_BLOCK = 2;
+}
+
+message EventMatch {
+  repeated string event_kinds = 1;
+  repeated string projected_attribute_keys = 2;
+  DeliveryMode delivery_mode = 3;
+}
+
+message SpecificationFilter {
+  string specification_id = 1;
+  string specification_version = 2;
+  EventMatch event_match = 3;
+  FailMode fail_mode = 4;
+  optional uint64 latency_budget_nanoseconds = 5;
+  EvaluationMode evaluation_mode = 6;
+  Readiness readiness = 7;
+  optional uint64 target_filter_epoch = 8;
+  repeated SourceIdentity required_sources = 9;
+  repeated Watermark activation_watermarks = 10;
+  EnforcementGateEvidence enforcement_gates = 11;
+}
+
+// The five ADR-0023 gates, attested by the compiler/promotion boundary.
+message EnforcementGateEvidence {
+  bool safety_property = 1;
+  bool ask_and_block = 2;
+  bool hot_path_only = 3;
+  bool anchor_tier = 4;
+  bool shadow_and_adversarial_validation_passed = 5;
+}
+
+message BaselineEvidenceFilter {
+  bool source_health = 1;
+  bool completeness_signals = 2;
+}
+
+message EventFilter {
+  optional uint64 epoch = 1;
+  repeated SpecificationFilter specifications = 2;
+  BaselineEvidenceFilter baseline_evidence = 3;
+}

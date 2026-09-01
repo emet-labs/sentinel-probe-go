@@ -1,0 +1,18 @@
+{
+  "format_version": "1.0.0",
+  "suites": [
+    {"kind": "spec_match", "path": "spec-match-v1.json"},
+    {"kind": "int128", "path": "int128-v1.json"},
+    {"kind": "enforcement_gate", "path": "enforcement-gate-v1.json"}
+  ],
+  "malformed": [
+    {"path": "malformed/version.json", "rejection_category": "version"},
+    {"path": "malformed/duplicate-key.json", "rejection_category": "duplicate-key"},
+    {"path": "malformed/unknown-field.json", "rejection_category": "unknown-field"},
+    {"path": "malformed/unknown-token.json", "rejection_category": "unknown-token"},
+    {"path": "malformed/missing-field.json", "rejection_category": "missing-field"},
+    {"path": "malformed/integer-lexeme.json", "rejection_category": "integer-lexeme"},
+    {"path": "malformed/integer-range.json", "rejection_category": "integer-range"},
+    {"path": "malformed/duplicate-id.json", "rejection_category": "duplicate-id"}
+  ]
+}

@@ -12,7 +12,7 @@ package specmatch
 import (
 	"slices"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // Selects reports whether spec's EventMatch selects event: its event_kinds is empty, or it

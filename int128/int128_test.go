@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	"github.com/emet-labs/sentinel/sdk/go/int128"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/int128"
 )
 
 func mustBig(t *testing.T, decimal string) *big.Int {

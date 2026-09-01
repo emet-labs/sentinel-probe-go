@@ -1,0 +1,166 @@
+syntax = "proto3";
+
+package sentinel.model.v1;
+
+import "sentinel/model/v1/common.proto";
+
+enum VerdictOutcome {
+  VERDICT_OUTCOME_UNSPECIFIED = 0;
+  VERDICT_OUTCOME_SATISFY = 1;
+  VERDICT_OUTCOME_VIOLATE = 2;
+  VERDICT_OUTCOME_INCONCLUSIVE = 3;
+}
+
+enum InconclusiveReason {
+  INCONCLUSIVE_REASON_UNSPECIFIED = 0;
+  INCONCLUSIVE_REASON_PREFIX_UNCERTAINTY = 1;
+  INCONCLUSIVE_REASON_OBSERVATIONAL_UNCERTAINTY = 2;
+  INCONCLUSIVE_REASON_EPISTEMIC_UNCERTAINTY = 3;
+  reserved 4;
+  reserved "INCONCLUSIVE_REASON_EVIDENCE_GAP";
+}
+
+enum VerdictAuthority {
+  VERDICT_AUTHORITY_UNSPECIFIED = 0;
+  VERDICT_AUTHORITY_PROVISIONAL = 1;
+  VERDICT_AUTHORITY_AUTHORITATIVE = 2;
+}
+
+enum TierSettlement {
+  TIER_SETTLEMENT_UNSPECIFIED = 0;
+  TIER_SETTLEMENT_NOT_REQUIRED = 1;
+  TIER_SETTLEMENT_PENDING = 2;
+  TIER_SETTLEMENT_SETTLED = 3;
+}
+
+message FilterEpochBySource {
+  SourceIdentity source = 1;
+  optional uint64 filter_epoch = 2;
+}
+
+message SourceGap {
+  SourceIdentity source = 1;
+  uint64 sequence_epoch = 2;
+  uint64 first_missing = 3;
+  uint64 last_missing = 4;
+  string effect = 5;
+}
+
+message SourceHealth {
+  SourceIdentity source = 1;
+  bool healthy = 2;
+  string detail = 3;
+}
+
+message SourceCapabilityRecord {
+  SourceIdentity source = 1;
+  repeated SourceCapability capabilities = 2;
+}
+
+message SourceTierRecord {
+  SourceIdentity source = 1;
+  SourceTier tier = 2;
+  // Events from this source that anchor this Verdict. Empty means this source anchored no Event here; it does not downgrade the tier.
+  repeated string anchored_event_ids = 3;
+}
+
+message UnresolvedCausalEdge {
+  string event_id = 1;
+  string missing_predecessor_id = 2;
+}
+
+message ExtractionFact {
+  string fact_id = 1;
+  bool available = 2;
+  string detail = 3;
+}
+
+message Uncertainty {
+  InconclusiveReason reason = 1;
+  string detail = 2;
+}
+
+// The explicit assurance downgrade when tier coverage is incomplete or no covered source anchors evidence.
+message SourceTierGap {
+  // Covered required sources classified as contributing-tier.
+  repeated SourceIdentity contributing_sources = 1;
+  string detail = 2;
+  // Required sources without valid anchor evidence, including sources with no tier record.
+  repeated SourceIdentity unanchored_sources = 3;
+}
+
+// An Event that participates in a closed, outcome-decisive violation witness.
+message DecisiveEvent {
+  string event_id = 1;
+  SourceIdentity source = 2;
+  optional uint64 sequence_epoch = 3;
+  optional uint64 sequence_number = 4;
+}
+
+// The exact open evidence a named proof rule establishes cannot change a violation.
+message OutcomeInvariantLimitations {
+  repeated SourceGap gaps = 1;
+  repeated SourceIdentity unhealthy_sources = 2;
+  repeated UnresolvedCausalEdge unresolved_causal_edges = 3;
+  repeated string unavailable_extraction_fact_ids = 4;
+  repeated InconclusiveReason uncertainty = 5;
+}
+
+// A named and versioned proof over a decisive witness and every open limitation.
+message DecisiveViolationBasis {
+  repeated DecisiveEvent witness_events = 1;
+  repeated string required_extraction_fact_ids = 2;
+  string invariance_proof_rule_id = 3;
+  string invariance_proof_rule_version = 4;
+  OutcomeInvariantLimitations outcome_invariant_limitations = 5;
+}
+
+// Presence asserts that the full required evidence set is closed at settlement.
+message CompleteEvidenceBasis {}
+
+// The outcome-specific evidence basis that justifies an authoritative conclusion.
+message SettlementBasis {
+  oneof basis {
+    CompleteEvidenceBasis complete_evidence = 1;
+    DecisiveViolationBasis decisive_violation = 2;
+  }
+}
+
+enum LateDataPolicy {
+  LATE_DATA_POLICY_UNSPECIFIED = 0;
+  LATE_DATA_POLICY_EXCLUDE = 1;
+  LATE_DATA_POLICY_ACCEPT_FOR_FUTURE_VERDICTS = 2;
+}
+
+// The evidence conditions inseparable from a Verdict (ADR-0017).
+message AssuranceEnvelope {
+  string specification_id = 1;
+  string specification_version = 2;
+  repeated string schema_versions = 3;
+  repeated FilterEpochBySource filter_epochs = 4;
+  repeated Watermark watermarks = 5;
+  repeated SourceIdentity required_sources = 6;
+  repeated SourceIdentity observed_sources = 7;
+  repeated SourceGap gaps = 8;
+  repeated SourceHealth source_health = 9;
+  repeated SourceCapabilityRecord capabilities = 10;
+  repeated SourceTierRecord source_tiers_and_anchors = 11;
+  repeated UnresolvedCausalEdge unresolved_causal_edges = 12;
+  repeated ExtractionFact extraction_facts = 13;
+  repeated Uncertainty uncertainty = 14;
+  LateDataPolicy late_data_policy = 15;
+  TierSettlement hot_path = 16;
+  TierSettlement cold_path = 17;
+  repeated Watermark hot_settlement_watermarks = 18;
+  repeated Watermark cold_settlement_watermarks = 19;
+  SourceTierGap source_tier_gap = 20;
+  SettlementBasis settlement_basis = 21;
+}
+
+message Verdict {
+  string id = 1;
+  VerdictOutcome outcome = 2;
+  optional InconclusiveReason inconclusive_reason = 3;
+  VerdictAuthority authority = 4;
+  AssuranceEnvelope assurance = 5;
+}

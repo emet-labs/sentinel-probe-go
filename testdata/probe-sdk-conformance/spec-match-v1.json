@@ -1,0 +1,11 @@
+{
+  "format_version": "1.0.0",
+  "kind": "spec_match",
+  "cases": [
+    {"id":"absent-match","specification_filter":{"event_match":null,"fail_mode":"open"},"producer_event":{"kind":"anything"},"expected":true},
+    {"id":"empty-kinds-empty-event","specification_filter":{"event_match":{"event_kinds":[],"delivery_mode":"ship_async","projected_attribute_keys":["ignored"]},"fail_mode":"open"},"producer_event":{"kind":""},"expected":true},
+    {"id":"exact-match","specification_filter":{"event_match":{"event_kinds":["tool.request","other"],"delivery_mode":"ask_and_block","projected_attribute_keys":["secret"]},"fail_mode":"closed"},"producer_event":{"kind":"tool.request"},"expected":true},
+    {"id":"exact-miss","specification_filter":{"event_match":{"event_kinds":["Tool.Request"],"delivery_mode":"ask_and_block","projected_attribute_keys":[]},"fail_mode":"open"},"producer_event":{"kind":"tool.request"},"expected":false},
+    {"id":"unicode-and-duplicates","specification_filter":{"event_match":{"event_kinds":["支払い","支払い"],"delivery_mode":"ship_async","projected_attribute_keys":[]},"fail_mode":"open"},"producer_event":{"kind":"支払い"},"expected":true}
+  ]
+}

@@ -9,7 +9,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // Options configures the Probe's tracer. Analog of otel-bridge.ts's EmissionOptions.

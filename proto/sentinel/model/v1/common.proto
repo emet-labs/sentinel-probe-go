@@ -1,0 +1,114 @@
+syntax = "proto3";
+
+package sentinel.model.v1;
+
+// A signed 128-bit integer split into two fixed-width words.
+// Its value is high * 2^64 + low, with high interpreted as signed two's complement.
+message Int128 {
+  sfixed64 high = 1;
+  fixed64 low = 2;
+}
+
+message SourceIdentity {
+  string monitored_application_id = 1;
+  string source_id = 2;
+}
+
+message SequenceCoordinate {
+  uint64 epoch = 1;
+  uint64 sequence = 2;
+}
+
+message OccurrenceTime {
+  string clock_domain_id = 1;
+  Int128 nanoseconds = 2;
+  uint64 uncertainty_nanoseconds = 3;
+}
+
+message ObservationTime {
+  string sentinel_clock_id = 1;
+  Int128 nanoseconds = 2;
+}
+
+enum SourceCapability {
+  SOURCE_CAPABILITY_UNSPECIFIED = 0;
+  SOURCE_CAPABILITY_OBSERVE_BEFORE_EFFECT = 1;
+  SOURCE_CAPABILITY_CAUSAL_EDGES = 2;
+  SOURCE_CAPABILITY_COMPLETENESS_SIGNALS = 3;
+  SOURCE_CAPABILITY_BOUNDED_CLOCK_UNCERTAINTY = 4;
+}
+
+enum Sensitivity {
+  SENSITIVITY_UNSPECIFIED = 0;
+  SENSITIVITY_PUBLIC = 1;
+  SENSITIVITY_INTERNAL = 2;
+  SENSITIVITY_CONFIDENTIAL = 3;
+  SENSITIVITY_RESTRICTED = 4;
+}
+
+// The data class an Event belongs to (ADR-0029). Monitored-Tenant data is governed by ADR-0026;
+// Corpus data is donated, sanitized evidence under a DUA and never receives tenant scoping.
+// The two classes have different retention, access semantics and consumers, so an Event must
+// declare which it is before anything downstream may store or evaluate it. UNSPECIFIED is
+// rejected by validation: a classless Event is the silent-wrong failure ADR-0029 exists to
+// prevent, not a parse error.
+enum DataClass {
+  DATA_CLASS_UNSPECIFIED = 0;
+  DATA_CLASS_TENANT = 1;
+  DATA_CLASS_CORPUS = 2;
+}
+
+enum SourceTier {
+  SOURCE_TIER_UNSPECIFIED = 0;
+  SOURCE_TIER_ANCHOR = 1;
+  SOURCE_TIER_CONTRIBUTING = 2;
+}
+
+enum Integrity {
+  INTEGRITY_UNSPECIFIED = 0;
+  INTEGRITY_UNVERIFIED = 1;
+  INTEGRITY_AUTHENTICATED = 2;
+  INTEGRITY_TAMPER_EVIDENT = 3;
+}
+
+// Deployment and transport assurance assigned after producer input is received.
+message SourceAssurance {
+  SourceIdentity source = 1;
+  SourceTier tier = 2;
+  repeated SourceCapability effective_capabilities = 3;
+  Integrity integrity = 4;
+  bytes authenticated_identity_evidence = 5;
+  bytes integrity_evidence = 6;
+  string topology_id = 7;
+}
+
+enum SourceActivityState {
+  SOURCE_ACTIVITY_STATE_UNSPECIFIED = 0;
+  SOURCE_ACTIVITY_STATE_ACTIVE = 1;
+  SOURCE_ACTIVITY_STATE_INTENTIONALLY_IDLE = 2;
+}
+
+// Authored by a Probe; it cannot assert receiver-local identity or observation time.
+message ProducerCompletenessSignal {
+  uint64 sequence_epoch = 1;
+  optional uint64 last_emitted = 2;
+  optional uint64 complete_through = 3;
+  OccurrenceTime producer_reported_at = 4;
+  optional uint64 acknowledged_filter_epoch = 5;
+  SourceActivityState activity = 6;
+  OccurrenceTime activity_since = 7;
+}
+
+// Sentinel's canonical completeness evidence after transport/deployment verification.
+message SourceCompletenessSignal {
+  ProducerCompletenessSignal producer_signal = 1;
+  SourceAssurance assurance = 2;
+  ObservationTime observed_at = 3;
+}
+
+message Watermark {
+  SourceIdentity source = 1;
+  uint64 sequence_epoch = 2;
+  uint64 complete_through = 3;
+  ObservationTime observed_at = 4;
+}

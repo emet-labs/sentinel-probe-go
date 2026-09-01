@@ -20,17 +20,17 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/emet-labs/sentinel/sdk/go/gen
+      value: github.com/emet-labs/sentinel-probe-go/gen
 inputs:
   - directory: proto
 plugins:
   # Same pin as the repo-root buf.gen.yaml; requires a google.golang.org/protobuf >= v1.36 runtime.
   - remote: buf.build/protocolbuffers/go:v1.36.10
     revision: 1
-    out: sdk/go/gen
+    out: gen
     opt: paths=source_relative
   # Tracks the connectrpc.com/connect v1.20.0 runtime pinned in sdk/go/go.mod.
   - remote: buf.build/connectrpc/go:v1.20.0
     revision: 1
-    out: sdk/go/gen
+    out: gen
     opt: paths=source_relative
