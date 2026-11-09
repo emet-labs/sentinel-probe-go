@@ -11,13 +11,27 @@ import (
 	"regexp"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/emet-labs/sentinel/sdk/go/emission"
 	"github.com/emet-labs/sentinel/sdk/go/enforcement"
 	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
 	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
 	int128codec "github.com/emet-labs/sentinel/sdk/go/int128"
 	"github.com/emet-labs/sentinel/sdk/go/internal/specmatch"
+	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
+	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	tracepb "go.opentelemetry.io/proto/otlp/trace/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 const version = "1.0.0"
@@ -168,8 +182,8 @@ func TestManifestSuiteRegistryFailsClosed(t *testing.T) {
 		Malformed []json.RawMessage `json:"malformed"`
 	}
 	decodeStrict(t, "manifest-v1.json", &manifest)
-	want := []string{"spec_match:spec-match-v1.json", "int128:int128-v1.json", "enforcement_gate:enforcement-gate-v1.json"}
-	if manifest.FormatVersion != version || len(manifest.Suites) != len(want) {
+	want := []string{"spec_match:spec-match-v1.json", "int128:int128-v1.json", "enforcement_gate:enforcement-gate-v1.json", "otlp_signal:otlp-signal-v1.json"}
+	if manifest.FormatVersion != "1.1.0" || len(manifest.Suites) != len(want) {
 		t.Fatal("unsupported manifest")
 	}
 	for index, entry := range manifest.Suites {
@@ -379,4 +393,388 @@ func TestEnforcementGateVectors(t *testing.T) {
 			}
 		})
 	}
+}
+
+type otlpCase struct {
+	ID             string            `json:"id"`
+	Signal         string            `json:"signal"`
+	Path           string            `json:"path"`
+	Reject         bool              `json:"reject"`
+	Events         []otlpEvent       `json:"events"`
+	Completeness   *otlpCompleteness `json:"completeness"`
+	Verdict        *otlpVerdict      `json:"verdict"`
+	EventFilter    *otlpFilter       `json:"event_filter"`
+	DecideResponse *otlpDecide       `json:"decide_response"`
+}
+
+type otlpEvent struct {
+	ID             string   `json:"id"`
+	Kind           string   `json:"kind"`
+	SequenceEpoch  string   `json:"sequence_epoch"`
+	SequenceNumber string   `json:"sequence_number"`
+	Predecessors   []string `json:"predecessors"`
+}
+
+type otlpCompleteness struct {
+	SourceHandle            string `json:"source_handle"`
+	SequenceEpoch           string `json:"sequence_epoch"`
+	LastEmitted             string `json:"last_emitted"`
+	CompleteThrough         string `json:"complete_through"`
+	AcknowledgedFilterEpoch string `json:"acknowledged_filter_epoch"`
+	ClockDomainID           string `json:"clock_domain_id"`
+	OccurrenceNS            string `json:"occurrence_ns"`
+	UncertaintyNanoseconds  string `json:"uncertainty_nanoseconds"`
+	Activity                string `json:"activity"`
+}
+
+type otlpVerdict struct {
+	ID      string `json:"id"`
+	Outcome string `json:"outcome"`
+}
+
+type otlpFilter struct {
+	Epoch            string   `json:"epoch"`
+	SpecificationIDs []string `json:"specification_ids"`
+}
+
+type otlpDecide struct {
+	RequestID      string `json:"request_id"`
+	Action         string `json:"action"`
+	Specifications []struct {
+		ID     string `json:"id"`
+		Action string `json:"action"`
+	} `json:"specifications"`
+}
+
+func TestOtlpSignalVectors(t *testing.T) {
+	var suite struct {
+		FormatVersion string     `json:"format_version"`
+		Kind          string     `json:"kind"`
+		Cases         []otlpCase `json:"cases"`
+	}
+	decodeStrict(t, "otlp-signal-v1.json", &suite)
+	if suite.FormatVersion != "1.1.0" || suite.Kind != "otlp_signal" {
+		t.Fatal("unsupported otlp_signal suite")
+	}
+	ids := make([]string, 0, len(suite.Cases))
+	for _, vector := range suite.Cases {
+		ids = append(ids, vector.ID)
+		body := readConformanceBytes(t, vector.Path)
+		switch vector.Signal {
+		case "trace":
+			events, err := decodeTraceGoldens(body)
+			if vector.Reject {
+				if err == nil {
+					t.Fatalf("%s: golden reject was accepted", vector.ID)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", vector.ID, err)
+			}
+			if len(events) != len(vector.Events) {
+				t.Fatalf("%s: events = %d", vector.ID, len(events))
+			}
+			for index, event := range events {
+				want := vector.Events[index]
+				if event.GetId() != want.ID || event.GetKind() != want.Kind {
+					t.Fatalf("%s: event = %s %s", vector.ID, event.GetId(), event.GetKind())
+				}
+				if strconv.FormatUint(event.GetSequence().GetEpoch(), 10) != want.SequenceEpoch ||
+					strconv.FormatUint(event.GetSequence().GetSequence(), 10) != want.SequenceNumber {
+					t.Fatalf("%s: sequence", vector.ID)
+				}
+				if !sameStrings(event.GetCausalPredecessorIds(), want.Predecessors) {
+					t.Fatalf("%s: predecessors = %v", vector.ID, event.GetCausalPredecessorIds())
+				}
+			}
+		case "completeness":
+			assertCompletenessGolden(t, vector.ID, body, vector.Completeness)
+		case "verdict":
+			inbound := mustInbound(t, body)
+			if len(inbound.Verdicts) != 1 || inbound.Verdicts[0].GetId() != vector.Verdict.ID || outcomeToken(inbound.Verdicts[0].GetOutcome()) != vector.Verdict.Outcome {
+				t.Fatalf("%s: verdict", vector.ID)
+			}
+		case "event_filter":
+			inbound := mustInbound(t, body)
+			if len(inbound.Filters) != 1 || strconv.FormatUint(inbound.Filters[0].GetEpoch(), 10) != vector.EventFilter.Epoch || !sameStrings(specIDs(inbound.Filters[0]), vector.EventFilter.SpecificationIDs) {
+				t.Fatalf("%s: event filter", vector.ID)
+			}
+		case "decide_response":
+			inbound := mustInbound(t, body)
+			if len(inbound.Decisions) != 1 {
+				t.Fatalf("%s: decisions", vector.ID)
+			}
+			decision := inbound.Decisions[0]
+			if decision.GetRequestId() != vector.DecideResponse.RequestID || actionToken(decision.GetAction()) != vector.DecideResponse.Action {
+				t.Fatalf("%s: decide", vector.ID)
+			}
+			if len(decision.GetSpecifications()) != len(vector.DecideResponse.Specifications) {
+				t.Fatalf("%s: specification decisions", vector.ID)
+			}
+			for index, spec := range decision.GetSpecifications() {
+				want := vector.DecideResponse.Specifications[index]
+				if spec.GetSpecificationId() != want.ID || actionToken(spec.GetAction()) != want.Action {
+					t.Fatalf("%s: specification %d", vector.ID, index)
+				}
+			}
+		default:
+			t.Fatalf("unknown signal %s", vector.Signal)
+		}
+	}
+	unique(t, ids)
+}
+
+func readConformanceBytes(t *testing.T, relative string) []byte {
+	t.Helper()
+	path := filepath.Clean(filepath.Join(fixtureRoot(t), filepath.FromSlash(relative)))
+	otlpDir := filepath.Clean(filepath.Join(fixtureRoot(t), "..", "otlp"))
+	if !strings.HasPrefix(path, otlpDir+string(os.PathSeparator)) {
+		t.Fatalf("path escapes otlp fixtures: %s", relative)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func decodeTraceGoldens(body []byte) ([]*modelv1.ProducerEvent, error) {
+	var request coltracepb.ExportTraceServiceRequest
+	if err := proto.Unmarshal(body, &request); err != nil {
+		return nil, err
+	}
+	var spans []sdktrace.ReadOnlySpan
+	var events []*modelv1.ProducerEvent
+	for _, span := range protoSpans(&request) {
+		stub, err := stubFromProto(span)
+		if err != nil {
+			return nil, err
+		}
+		snapshot := stub.Snapshot()
+		spans = append(spans, snapshot)
+		events = append(events, emission.SpanToEvent(conversionFrom(snapshot)))
+	}
+	if _, err := otlp.BuildExport(spans); err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+func protoSpans(request *coltracepb.ExportTraceServiceRequest) []*tracepb.Span {
+	var spans []*tracepb.Span
+	for _, resource := range request.GetResourceSpans() {
+		for _, scope := range resource.GetScopeSpans() {
+			spans = append(spans, scope.GetSpans()...)
+		}
+	}
+	return spans
+}
+
+func stubFromProto(span *tracepb.Span) (tracetest.SpanStub, error) {
+	attrs := make([]attribute.KeyValue, 0, len(span.GetAttributes()))
+	for _, kv := range span.GetAttributes() {
+		encoded, err := keyValueFromProto(kv)
+		if err != nil {
+			return tracetest.SpanStub{}, err
+		}
+		attrs = append(attrs, encoded)
+	}
+	stub := tracetest.SpanStub{
+		Name:       span.GetName(),
+		StartTime:  time.Unix(0, int64(span.GetStartTimeUnixNano())).UTC(),
+		EndTime:    time.Unix(0, int64(span.GetEndTimeUnixNano())).UTC(),
+		Attributes: attrs,
+	}
+	if parent := span.GetParentSpanId(); len(parent) == 8 && !allZero(parent) && len(span.GetTraceId()) == 16 {
+		var traceID trace.TraceID
+		var spanID trace.SpanID
+		copy(traceID[:], span.GetTraceId())
+		copy(spanID[:], parent)
+		stub.Parent = trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID})
+	}
+	return stub, nil
+}
+
+func keyValueFromProto(kv *commonpb.KeyValue) (attribute.KeyValue, error) {
+	switch value := kv.GetValue().GetValue().(type) {
+	case *commonpb.AnyValue_StringValue:
+		return attribute.String(kv.GetKey(), value.StringValue), nil
+	case *commonpb.AnyValue_IntValue:
+		return attribute.Int64(kv.GetKey(), value.IntValue), nil
+	case *commonpb.AnyValue_BoolValue:
+		return attribute.Bool(kv.GetKey(), value.BoolValue), nil
+	case *commonpb.AnyValue_DoubleValue:
+		return attribute.Float64(kv.GetKey(), value.DoubleValue), nil
+	default:
+		return attribute.KeyValue{}, errors.New("unsupported otlp attribute " + kv.GetKey())
+	}
+}
+
+func conversionFrom(span sdktrace.ReadOnlySpan) emission.SpanConversion {
+	attrs := span.Attributes()
+	epoch := uintAttr(attrs, emission.AttributeSequenceEpoch)
+	number := uintAttr(attrs, emission.AttributeSequenceNumber)
+	filter := uintAttr(attrs, emission.AttributeAcknowledgedFilterEpoch)
+	schema, _ := stringAttr(attrs, emission.AttributeSchemaVersion)
+	eventID, _ := stringAttr(attrs, emission.AttributeEventID)
+	return emission.SpanConversion{
+		Span:              span,
+		Sequence:          &modelv1.SequenceCoordinate{Epoch: epoch, Sequence: number},
+		SchemaVersion:     schema,
+		AcknowledgedEpoch: &filter,
+		EventID:           eventID,
+	}
+}
+
+func uintAttr(attrs []attribute.KeyValue, key string) uint64 {
+	for _, kv := range attrs {
+		if string(kv.Key) == key && kv.Value.Type() == attribute.INT64 && kv.Value.AsInt64() >= 0 {
+			return uint64(kv.Value.AsInt64())
+		}
+	}
+	return 0
+}
+
+func stringAttr(attrs []attribute.KeyValue, key string) (string, bool) {
+	for _, kv := range attrs {
+		if string(kv.Key) == key && kv.Value.Type() == attribute.STRING {
+			return kv.Value.AsString(), true
+		}
+	}
+	return "", false
+}
+
+func assertCompletenessGolden(t *testing.T, id string, body []byte, want *otlpCompleteness) {
+	t.Helper()
+	if want == nil {
+		t.Fatalf("%s: missing completeness", id)
+	}
+	record := firstLogRecord(t, body)
+	if textAttr(record, otlp.AttributePayloadType) != otlp.PayloadCompleteness || textAttr(record, otlp.AttributeSourceHandle) != want.SourceHandle {
+		t.Fatalf("%s: completeness envelope", id)
+	}
+	raw, ok := record.GetBody().GetValue().(*commonpb.AnyValue_BytesValue)
+	if !ok {
+		t.Fatalf("%s: completeness body", id)
+	}
+	signal := &modelv1.ProducerCompletenessSignal{}
+	if err := proto.Unmarshal(raw.BytesValue, signal); err != nil {
+		t.Fatal(err)
+	}
+	if strconv.FormatUint(signal.GetSequenceEpoch(), 10) != want.SequenceEpoch ||
+		strconv.FormatUint(signal.GetLastEmitted(), 10) != want.LastEmitted ||
+		strconv.FormatUint(signal.GetCompleteThrough(), 10) != want.CompleteThrough ||
+		strconv.FormatUint(signal.GetAcknowledgedFilterEpoch(), 10) != want.AcknowledgedFilterEpoch {
+		t.Fatalf("%s: completeness sequence", id)
+	}
+	when := signal.GetProducerReportedAt()
+	got := int128codec.ToBigInt(when.GetNanoseconds())
+	occurrence, ok := new(big.Int).SetString(want.OccurrenceNS, 10)
+	if !ok || got.Cmp(occurrence) != 0 || when.GetClockDomainId() != want.ClockDomainID || strconv.FormatUint(when.GetUncertaintyNanoseconds(), 10) != want.UncertaintyNanoseconds {
+		t.Fatalf("%s: occurrence", id)
+	}
+	if activityToken(signal.GetActivity()) != want.Activity {
+		t.Fatalf("%s: activity %s", id, signal.GetActivity())
+	}
+}
+
+func firstLogRecord(t *testing.T, body []byte) *logspb.LogRecord {
+	t.Helper()
+	var request collogspb.ExportLogsServiceRequest
+	if err := proto.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	resources := request.GetResourceLogs()
+	if len(resources) != 1 || len(resources[0].GetScopeLogs()) != 1 || len(resources[0].GetScopeLogs()[0].GetLogRecords()) != 1 {
+		t.Fatal("log golden shape")
+	}
+	return resources[0].GetScopeLogs()[0].GetLogRecords()[0]
+}
+
+func textAttr(record *logspb.LogRecord, key string) string {
+	for _, attribute := range record.GetAttributes() {
+		if attribute.GetKey() != key {
+			continue
+		}
+		if text, ok := attribute.GetValue().GetValue().(*commonpb.AnyValue_StringValue); ok {
+			return text.StringValue
+		}
+	}
+	return ""
+}
+
+func mustInbound(t *testing.T, body []byte) *otlp.Inbound {
+	t.Helper()
+	inbound, err := otlp.DecodeInboundLogs(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inbound
+}
+
+func specIDs(filter *modelv1.EventFilter) []string {
+	ids := make([]string, 0, len(filter.GetSpecifications()))
+	for _, spec := range filter.GetSpecifications() {
+		ids = append(ids, spec.GetSpecificationId())
+	}
+	return ids
+}
+
+func outcomeToken(outcome modelv1.VerdictOutcome) string {
+	switch outcome {
+	case modelv1.VerdictOutcome_VERDICT_OUTCOME_SATISFY:
+		return "satisfy"
+	case modelv1.VerdictOutcome_VERDICT_OUTCOME_VIOLATE:
+		return "violate"
+	case modelv1.VerdictOutcome_VERDICT_OUTCOME_INCONCLUSIVE:
+		return "inconclusive"
+	default:
+		return ""
+	}
+}
+
+func actionToken(action probev1.DecisionAction) string {
+	switch action {
+	case probev1.DecisionAction_DECISION_ACTION_PERMIT:
+		return "permit"
+	case probev1.DecisionAction_DECISION_ACTION_DENY:
+		return "deny"
+	case probev1.DecisionAction_DECISION_ACTION_DEFER:
+		return "defer"
+	default:
+		return ""
+	}
+}
+
+func activityToken(activity modelv1.SourceActivityState) string {
+	switch activity {
+	case modelv1.SourceActivityState_SOURCE_ACTIVITY_STATE_ACTIVE:
+		return "active"
+	case modelv1.SourceActivityState_SOURCE_ACTIVITY_STATE_INTENTIONALLY_IDLE:
+		return "idle"
+	default:
+		return ""
+	}
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for index := range got {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func allZero(value []byte) bool {
+	for _, byte := range value {
+		if byte != 0 {
+			return false
+		}
+	}
+	return true
 }
