@@ -8,8 +8,11 @@ import (
 	"github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1/probev1connect"
 )
 
-// TransportOptions configures the Connect client for Sentinel's decision endpoint.
-// Analog of transport.ts's TransportOptions.
+// TransportOptions configures a Connect client for SentinelDecisionService.
+//
+// The live Probe wire is OTLP (#398). This client remains compiled so the
+// loopback test can still exercise the generated stub. Nothing in the export
+// or enforcement path dials it.
 type TransportOptions struct {
 	// BaseURL of the Sentinel decision endpoint, for example "http://sentinel.local:7070".
 	BaseURL string

@@ -3,19 +3,18 @@
 The Go Probe SDK (issue #33), ported from the TypeScript reference SDK in `sdk/typescript/`
 (issue #28). It implements against the locked proto contract (#27, closed). The SDK:
 
-- connects to Sentinel and holds the versioned Event Filter for its source (`client/`)
-- wraps the OTel Go SDK to produce spans the OTLP Adapter normalizes (`emission/`)
+- holds the versioned Event Filter for its source (`client/`)
+- exports ended spans as OTLP/HTTP protobuf to `/v1/traces` (`emission/`, `otlp/`)
 - applies attribute-level Filter projection before shipping — relevance, never sampling
   (`filter/`, ADR-0006)
-- enforces `ASK_AND_BLOCK` specs via the decision endpoint (`enforcement/`, the ADR-0023
-  bounded fragment)
+- enforces `ASK_AND_BLOCK` specs from a `DecideResponse` delivered on `POST /v1/logs`
+  (`enforcement/`, the ADR-0023 bounded fragment). The live path does not dial Decide
 - reads source-tier from deployment config (`config/`, ADR-0022, never hard-coded)
 
-The live SagaShop integration test is blocked on **#22** (enforcement decision seam) and
-**#23** (production OTLP Adapter): no `SentinelDecisionService` is served anywhere in this
-repository, so there is nothing to integrate against. #10 closed by delivering a pure library
-evaluator in `core/`, not a server, and is not the blocker. The SDK itself and its unit tests
-against the proto contract are buildable now.
+ADR-0002 left export to the host. #398 excepts the Probe wire: this SDK posts traces
+and completeness logs, and receives Verdict, Event Filter, and DecideResponse logs.
+`SentinelDecisionService` is not the wire. The same-machine test runs from
+`just harness-probe-sdk-go` against the devbox-built `sentinel-periphery`.
 
 ## Generated code is not committed
 

@@ -24,15 +24,12 @@
 // a wall-clock-ish context deadline with the proto's monotonic relative budget is a
 // clock-domain error. A host that wants both sets both.
 //
-// The corollary, which is easy to miss: Deps.Decide is normally a Connect client over
-// net/http, which DOES honour a context deadline the host set. So Gate can receive
-// context.DeadlineExceeded or context.Canceled back from Decide. Those are classified as
-// transport errors and routed into the aggregate fail mode, exactly like any other error,
-// with Reason distinguishing a context error from a connect.CodeOf(err). Never a permit,
-// never a panic. A context that is ALREADY dead when Gate is called takes the same path
-// without asking at all (divergence D17) — a real Connect client would fail identically, and
-// checking makes the outcome independent of whether a given Decide implementation happens to
-// honour ctx.
+// The corollary, which is easy to miss: a context that is already dead is classified
+// as a transport error and routed into the aggregate fail mode without asking
+// (divergence D17). A Decide implementation that returns context.DeadlineExceeded
+// or context.Canceled is classified the same way, with Reason distinguishing a
+// context error from a connect.CodeOf(err). Never a permit, never a panic. The
+// live Decide reads an OTLP DecideResponse. It does not dial the RPC.
 //
 // # Projection is the caller's job
 //

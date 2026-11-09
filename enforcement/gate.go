@@ -97,8 +97,9 @@ type GateOutcome struct {
 // Deps are the effects the gate needs, all injected so the gate itself stays pure and
 // testable without a network or a clock.
 type Deps struct {
-	// Decide performs the ask. In production this wraps
-	// probev1connect.SentinelDecisionServiceClient.Decide; in tests it is a stub.
+	// Decide performs the ask. In production this reads a DecideResponse the OTLP
+	// log receiver already decoded. It does not dial SentinelDecisionService.
+	// A missing response is an error and takes the fail-mode path.
 	Decide func(ctx context.Context, request *probev1.DecideRequest) (*probev1.DecideResponse, error)
 	// NowMonotonicNs reads the host's monotonic clock. Required whenever deadlineNs is set.
 	NowMonotonicNs func() int64

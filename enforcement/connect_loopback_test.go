@@ -60,9 +60,8 @@ func startLoopback(t *testing.T, service *loopbackService) probev1connect.Sentin
 	})
 }
 
-// deciderFor is client.DecideFunc, the adapter the SDK ships so a host does not have to write
-// the Connect envelope wrapping by hand. Driving the shipped adapter here rather than a local
-// copy is the point: this exercises the production path end to end.
+// deciderFor is the compiled Connect adapter. The live gate does not use it.
+// This test only proves the generated stub still round-trips on loopback.
 func deciderFor(decider probev1connect.SentinelDecisionServiceClient) func(
 	context.Context, *probev1.DecideRequest,
 ) (*probev1.DecideResponse, error) {

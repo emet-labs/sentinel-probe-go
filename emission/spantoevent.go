@@ -11,8 +11,14 @@ import (
 // Reserved attribute keys. They carry causal-edge metadata and are never emitted as
 // ProducerEvent attributes. Same string constants as the TypeScript reference.
 const (
-	AttributeEventID       = "sentinel.event.id"
-	AttributeParentEventID = "sentinel.parent.event.id"
+	AttributeEventID                 = "sentinel.event.id"
+	AttributeParentEventID           = "sentinel.parent.event.id"
+	AttributeSequenceEpoch           = "sentinel.sequence.epoch"
+	AttributeSequenceNumber          = "sentinel.sequence.number"
+	AttributeSchemaVersion           = "sentinel.schema.version"
+	AttributeAcknowledgedFilterEpoch = "sentinel.acknowledged_filter_epoch"
+	AttributeClaimedSensitivity      = "sentinel.claimed_sensitivity"
+	AttributeClaimedCapabilities     = "sentinel.claimed_capabilities"
 )
 
 // Malformed-link sources reported through SpanConversion.OnMalformedLink.
@@ -201,6 +207,8 @@ func collectCausalPredecessors(span sdktrace.ReadOnlySpan, onMalformedLink func(
 		predecessors = append(predecessors, parentEventID)
 	} else if parent := span.Parent(); parent.IsValid() {
 		// Parent() returns a VALUE, so validity is IsValid(), not a nil check.
+		// This fallback is local to SpanToEvent. The OTLP export refuses the
+		// span instead of sending the span id (otlp.BuildExport).
 		spanID := parent.SpanID().String()
 		predecessors = append(predecessors, spanID)
 		if onMalformedLink != nil {
@@ -214,6 +222,8 @@ func collectCausalPredecessors(span sdktrace.ReadOnlySpan, onMalformedLink func(
 			predecessors = append(predecessors, linkEventID)
 			continue
 		}
+		// Same local fallback as the parent edge. OTLP export refuses the span
+		// instead of putting this span id on the wire.
 		spanID := link.SpanContext.SpanID().String()
 		predecessors = append(predecessors, spanID)
 		if onMalformedLink != nil {

@@ -1,13 +1,16 @@
-// Package client holds the Probe's connection to Sentinel and the versioned Event Filter for
-// its source. It is the Go analog of sdk/typescript/src/client/.
+// Package client holds the Probe's versioned Event Filter and builds decision
+// requests. It is the Go analog of sdk/typescript/src/client/.
 //
-// # Filter delivery is out of SDK scope
+// The live path does not dial Decide. Verdicts, Event Filters, and
+// DecideResponses arrive as OTLP logs. SetDecisions installs the receiver the
+// gate reads. NewSentinelClient remains compiled and is not that path.
 //
-// proto/sentinel/probe/v1/decision.proto declares exactly one RPC, the unary Decide. ADR-0006
-// says Sentinel pushes Event Filters to Probes, but no wire form for that push exists yet. So
-// this package holds and refreshes a filter; the host delivers it by calling SetFilter when a
-// push arrives, and RefreshOnEpoch is the guard that no-ops on an unchanged epoch. Identical
-// to the TypeScript reference.
+// # Filter delivery
+//
+// ADR-0006 says Sentinel pushes Event Filters. The push is an OTLP log whose
+// payload type is sentinel.model.v1.EventFilter. This package holds and
+// refreshes a filter; the host calls SetFilter when the receiver delivers one,
+// and RefreshOnEpoch no-ops on an unchanged epoch.
 //
 // # Two presence traps that the TypeScript reference could not have
 //

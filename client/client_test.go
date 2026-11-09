@@ -5,17 +5,14 @@ import (
 	"testing"
 
 	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
 )
 
 const testBaseURL = "http://sentinel.local:7070"
 
 func newTestClient(t *testing.T, config Config) *ProbeClient {
 	t.Helper()
-	decider := NewSentinelClient(TransportOptions{BaseURL: testBaseURL})
-	if decider == nil {
-		t.Fatal("NewSentinelClient returned nil")
-	}
-	return New(config, decider)
+	return New(config)
 }
 
 func makeEvent(id, kind string) *modelv1.ProducerEvent {
@@ -156,35 +153,47 @@ func TestProbeClientInitialFilterSeedsStore(t *testing.T) {
 	}
 }
 
-func TestProbeClientExposesDeciderAndSourceHandle(t *testing.T) {
+func TestProbeClientExposesSourceHandle(t *testing.T) {
 	t.Parallel()
 
-	decider := NewSentinelClient(TransportOptions{BaseURL: testBaseURL})
-	client := New(Config{SourceHandle: "gateway.tool-calls"}, decider)
-	if client.Decider() == nil {
-		t.Fatal("Decider must expose the client the gate calls")
-	}
+	client := New(Config{SourceHandle: "gateway.tool-calls"})
 	if client.SourceHandle() != "gateway.tool-calls" {
 		t.Fatalf("SourceHandle = %q", client.SourceHandle())
 	}
 }
 
-// TestProbeClientDecideFunc: the adapter from the generated Connect client to the enforcement
-// gate's Decide dependency ships with the SDK rather than being rewritten by every host. Its
-// real wire behaviour is exercised in enforcement/connect_loopback_test.go, which drives this
-// same function against a live handler over httptest.
+// TestProbeClientDecideFunc reads a DecideResponse the caller already holds.
+// It does not dial. The Connect adapter remains compiled and is covered by the
+// loopback test; it is not this path.
 func TestProbeClientDecideFunc(t *testing.T) {
 	t.Parallel()
 
-	decider := NewSentinelClient(TransportOptions{BaseURL: testBaseURL})
-	probe := New(Config{SourceHandle: "gateway.tool-calls"}, decider)
+	probe := New(Config{SourceHandle: "gateway.tool-calls"})
+	if _, err := probe.DecideFunc()(t.Context(), &probev1.DecideRequest{RequestId: "req-1"}); err == nil {
+		t.Fatal("an ask before SetDecisions must fail")
+	}
+	probe.SetDecisions(stubDecisions{response: &probev1.DecideResponse{
+		RequestId: "req-1",
+		Action:    probev1.DecisionAction_DECISION_ACTION_DENY,
+	}})
+	response, err := probe.DecideFunc()(t.Context(), &probev1.DecideRequest{RequestId: "req-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetAction() != probev1.DecisionAction_DECISION_ACTION_DENY {
+		t.Fatalf("action = %v", response.GetAction())
+	}
+}
 
-	if probe.DecideFunc() == nil {
-		t.Fatal("DecideFunc must return a callable adapter")
+type stubDecisions struct {
+	response *probev1.DecideResponse
+}
+
+func (s stubDecisions) Response(requestID string) (*probev1.DecideResponse, error) {
+	if s.response.GetRequestId() != requestID {
+		return nil, errNoDecisionReceiver
 	}
-	if DecideFunc(decider) == nil {
-		t.Fatal("the package-level DecideFunc must return a callable adapter")
-	}
+	return s.response, nil
 }
 
 func TestNewSentinelClientDefaultsHTTPClient(t *testing.T) {

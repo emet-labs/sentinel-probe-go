@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"errors"
 
 	"connectrpc.com/connect"
 
@@ -10,16 +11,19 @@ import (
 	"github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1/probev1connect"
 )
 
+// Decisions supplies a DecideResponse decoded from an OTLP log. The live path
+// reads this. It does not dial SentinelDecisionService.
+type Decisions interface {
+	Response(requestID string) (*probev1.DecideResponse, error)
+}
+
 // Config describes the Probe's identity and the Sentinel it talks to.
 // Analog of probe-client.ts's ProbeClientConfig.
 type Config struct {
 	// SourceHandle is the Probe's source_handle, used in DecideRequest.source_handle.
 	SourceHandle string
-	// SentinelBaseURL is the Sentinel decision endpoint base URL. The SDK never reads it —
-	// the decider passed to New is what carries requests, and it already holds its own base
-	// URL. The field exists for parity with the reference's ProbeClientConfig.sentinelBaseUrl,
-	// which is equally inert there, and so a host can keep its endpoint configuration in one
-	// struct.
+	// SentinelBaseURL is the OTLP base URL the host passes to the tracer. This
+	// package does not dial it. Decide responses arrive on the log receiver.
 	SentinelBaseURL string
 	// InitialFilter optionally seeds the store before the first push, for example from a
 	// local cache.
@@ -29,23 +33,26 @@ type Config struct {
 // ProbeClient owns the Probe's filter state and builds decision requests against it.
 // Analog of probe-client.ts's ProbeClient.
 //
-// Safe for concurrent use: all mutable state lives behind FilterStore's atomic pointer.
+// Safe for concurrent use of the filter store. SetDecisions must happen before
+// the gate asks, or the caller must synchronize it with DecideFunc.
 type ProbeClient struct {
-	config  Config
-	store   *FilterStore
-	decider probev1connect.SentinelDecisionServiceClient
+	config    Config
+	store     *FilterStore
+	decisions Decisions
 }
 
-// New builds a ProbeClient. The decider is a REQUIRED parameter with no default: the
-// TypeScript reference originally defaulted its transport, which was corrected on review
-// because a silently-defaulted transport hides a misconfigured endpoint until the first
-// enforcement call. Pass client.NewSentinelClient(...) in production and a stub in tests.
-func New(config Config, decider probev1connect.SentinelDecisionServiceClient) *ProbeClient {
+// New builds a ProbeClient. Decisions arrive later, through SetDecisions, from
+// the OTLP log receiver. There is no Connect client on this path.
+func New(config Config) *ProbeClient {
 	return &ProbeClient{
-		config:  config,
-		store:   NewFilterStore(config.InitialFilter),
-		decider: decider,
+		config: config,
+		store:  NewFilterStore(config.InitialFilter),
 	}
+}
+
+// SetDecisions installs the OTLP log source the gate reads.
+func (c *ProbeClient) SetDecisions(decisions Decisions) {
+	c.decisions = decisions
 }
 
 // CurrentFilter returns the EventFilter for this source, or nil before the first refresh.
@@ -95,35 +102,34 @@ func (c *ProbeClient) BuildDecideRequest(
 	}
 }
 
-// Decider exposes the decision client so the enforcement gate can call it.
-func (c *ProbeClient) Decider() probev1connect.SentinelDecisionServiceClient {
-	return c.decider
-}
-
 // SourceHandle returns the configured source handle, which the enforcement gate stamps into
 // every DecideRequest.
 func (c *ProbeClient) SourceHandle() string {
 	return c.config.SourceHandle
 }
 
-// DecideFunc adapts this client's decider to the shape the enforcement gate's Decide
-// dependency expects, so a host does not have to write the Connect envelope wrapping by hand:
-//
-//	outcome := enforcement.Gate(ctx, projected, probe.CurrentFilter(), deadline,
-//	    enforcement.Deps{Decide: probe.DecideFunc(), NowMonotonicNs: ..., AcceptedFailModeFor: ...},
-//	    enforcement.Options{SourceHandle: probe.SourceHandle(), ...})
-//
-// The enforcement package deliberately takes a plain function rather than the generated
-// interface, so it stays testable without a transport; this is the adapter between the two.
-// The reference has the same gap around getTransport() and never closed it.
+// DecideFunc adapts the OTLP log receiver to the enforcement gate. A missing
+// receiver or a missing response is an error, and the gate applies the fail
+// mode. This function does not dial SentinelDecisionService.
 func (c *ProbeClient) DecideFunc() func(context.Context, *probev1.DecideRequest) (*probev1.DecideResponse, error) {
-	return DecideFunc(c.decider)
+	return func(ctx context.Context, request *probev1.DecideRequest) (*probev1.DecideResponse, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if c.decisions == nil {
+			return nil, errNoDecisionReceiver
+		}
+		return c.decisions.Response(request.GetRequestId())
+	}
 }
 
-// DecideFunc adapts any SentinelDecisionServiceClient to the enforcement gate's Decide
-// dependency. Use the ProbeClient method unless the decider is not the one a ProbeClient
-// holds. Errors are returned unwrapped so the gate can classify *connect.Error and context
-// errors distinctly.
+// errNoDecisionReceiver is returned when the gate asks before SetDecisions.
+var errNoDecisionReceiver = errors.New("otlp: DecideResponse receiver is not configured")
+
+// DecideFunc adapts a Connect client to the gate's Decide dependency. It is not
+// the live path: #398 carries DecideResponse on an OTLP log, and the Decide RPC
+// is not served. The loopback test is the only caller. Errors are returned
+// unwrapped so the gate can classify *connect.Error and context errors.
 func DecideFunc(
 	decider probev1connect.SentinelDecisionServiceClient,
 ) func(context.Context, *probev1.DecideRequest) (*probev1.DecideResponse, error) {

@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel/sdk/go/otlp"
 )
 
 // Options configures the Probe's tracer. Analog of otel-bridge.ts's EmissionOptions.
@@ -24,6 +25,13 @@ type Options struct {
 	// span processors, samplers or its own resource. The slice is cloned before use, so the
 	// caller's backing array is never written to.
 	ProviderOptions []sdktrace.TracerProviderOption
+	// Endpoint is the Sentinel base URL, for example http://127.0.0.1:8080.
+	// When set, ended spans are exported as OTLP/HTTP protobuf to /v1/traces.
+	// Empty leaves export unset so a test can attach its own processor.
+	// ADR-0002 left export to the host; #398 excepts the Probe wire.
+	Endpoint string
+	// SourceHandle is sent as x-sentinel-source-handle. Required when Endpoint is set.
+	SourceHandle string
 }
 
 // ProbeTracer bundles the tracer a Probe emits with, its provider, and the conversion into
@@ -35,9 +43,11 @@ type ProbeTracer struct {
 
 // NewProbeTracer builds a TracerProvider and a tracer for a Probe.
 //
-// No exporter is configured, deliberately. ADR-0002 makes OTel an adapter rather than the
-// substrate, so the host owns export: it attaches an OTLP span processor to Provider, as
-// SagaShop's Go port does with otlptracehttp. The SDK never chooses where spans go.
+// When Endpoint is set, the provider exports ended spans to that Sentinel as
+// OTLP/HTTP protobuf. That is the #398 Probe wire, the exception to ADR-0002's
+// rule that the host owns export. A blank Endpoint still installs no exporter.
+// A set Endpoint with a blank handle or a non-HTTP URL panics: that is a wiring
+// bug, and silently dropping the export would look like a missing span.
 //
 // The caller owns the returned Provider's lifecycle and must call Shutdown on it.
 func NewProbeTracer(options Options) *ProbeTracer {
@@ -63,6 +73,17 @@ func NewProbeTracer(options Options) *ProbeTracer {
 			otel.Handle(err)
 		}
 		providerOptions = append(providerOptions, sdktrace.WithResource(merged))
+	}
+
+	if options.Endpoint != "" {
+		exporter, err := otlp.NewTraceExporter(otlp.TraceConfig{
+			Endpoint:     options.Endpoint,
+			SourceHandle: options.SourceHandle,
+		})
+		if err != nil {
+			panic("emission: OTLP exporter: " + err.Error())
+		}
+		providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter)))
 	}
 
 	provider := sdktrace.NewTracerProvider(providerOptions...)

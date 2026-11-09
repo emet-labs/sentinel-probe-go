@@ -1,9 +1,11 @@
 // Package emission converts OTel Go spans into sentinel.model.v1.ProducerEvent values.
 // Go analog of sdk/typescript/src/emission/ (span-to-event.ts, otel-bridge.ts).
 //
-// The SDK does not own export. ADR-0002 makes OTel an adapter, not the substrate: this
-// package produces spans and converts them, and the host wires the OTLP exporter, exactly as
-// SagaShop's Go port does in internal/otelx/tracing.go.
+// ADR-0002 makes OTel an adapter, not the substrate. #398 excepts the Probe wire:
+// NewProbeTracer exports ended spans as OTLP/HTTP protobuf when Endpoint is set.
+// A missing predecessor id is not replaced with a span id on that export; the
+// export is refused. SpanToEvent still reports the local fallback so a host can
+// see the contract break before anything is sent.
 //
 // # Producer contract for causal edges
 //
@@ -20,8 +22,11 @@
 // SpanToEvent reads predecessors from exactly those places. It falls back to the hex span ID
 // only when the attribute is absent, and reports every such fallback through
 // SpanConversion.OnMalformedLink, because a fallback means the producer contract was
-// violated and the resulting edge is not joinable with anything else. Both reserved keys are
-// excluded from ProducerEvent.attributes: they carry causal-edge metadata, not domain data.
+// violated and the resulting edge is not joinable with anything else. The OTLP exporter
+// does not send that fallback. Both reserved keys are excluded from
+// ProducerEvent.attributes: they carry causal-edge metadata, not domain data.
+// The export also carries sentinel.sequence.epoch, sentinel.sequence.number,
+// sentinel.schema.version, and sentinel.acknowledged_filter_epoch.
 //
 // # Constructing spans in tests
 //
