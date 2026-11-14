@@ -35,12 +35,14 @@ func TestChargeAndLinkedShipObserveAVerdict(t *testing.T) {
 		attribute.String("sagashop.payment.status", "success"),
 		attribute.String("sagashop.order.id", "order-1001"),
 	})
+	evaluationsSettled(t, stack.base)
 	if len(stack.receiver.Verdicts()) != 0 {
 		t.Fatal("a charge alone is not a pass")
 	}
 	exportSpan(t, order, "sagashop.order.ship.requested", "01f0c0ffee-ship", "01f0c0ffee-charge", []attribute.KeyValue{
 		attribute.String("sagashop.order.id", "order-1001"),
 	})
+	evaluationsSettled(t, stack.base)
 	verdicts := stack.receiver.Verdicts()
 	if len(verdicts) == 0 {
 		t.Fatal("the log receiver observed no Verdict")
@@ -70,6 +72,7 @@ func TestShipWithoutAChargeIsNotSatisfy(t *testing.T) {
 	exportSpan(t, order, "sagashop.order.ship.requested", "01f0c0ffee-noship", "", []attribute.KeyValue{
 		attribute.String("sagashop.order.id", "order-2002"),
 	})
+	evaluationsSettled(t, stack.base)
 	verdicts := stack.receiver.Verdicts()
 	if len(verdicts) == 0 {
 		t.Fatal("a covered ship with no successful charge produced no Verdict")
@@ -162,6 +165,47 @@ func waitHealthy(t *testing.T, base string, stderr *bytes.Buffer) {
 			t.Fatalf("periphery healthz failed: %v %s", err, stderr.String())
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// evaluationsSettled returns once periphery has finished every evaluation
+// requested before the call (#454). An OTLP ack means the evidence is stored;
+// evaluation and the Verdict push run on periphery's evaluation worker after
+// the response. It reads requested once from GET /v1/evaluations/queue and
+// polls until completed reaches it, and fails the test if any pass failed.
+func evaluationsSettled(t *testing.T, base string) {
+	t.Helper()
+	var target int64 = -1
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		response, err := http.Get(base + "/v1/evaluations/queue")
+		if err != nil {
+			t.Fatalf("evaluation queue: %v", err)
+		}
+		var counters struct {
+			Requested    int64 `json:"requested"`
+			Completed    int64 `json:"completed"`
+			FailedPasses int64 `json:"failed_passes"`
+		}
+		decodeErr := json.NewDecoder(response.Body).Decode(&counters)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || decodeErr != nil {
+			t.Fatalf("evaluation queue: status %d, %v", response.StatusCode, decodeErr)
+		}
+		if target < 0 {
+			target = counters.Requested
+		}
+		if counters.Completed >= target {
+			// A failed pass still completes its requests; this stack never fails one.
+			if counters.FailedPasses != 0 {
+				t.Fatalf("periphery reported %d failed evaluation passes", counters.FailedPasses)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("evaluations did not settle: completed %d of %d", counters.Completed, target)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
