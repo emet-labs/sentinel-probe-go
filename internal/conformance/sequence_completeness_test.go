@@ -90,7 +90,7 @@ func loadSequenceSuite(t *testing.T) sequenceSuite {
 		Malformed []json.RawMessage `json:"malformed"`
 	}
 	decodeStrict(t, "manifest-v1.json", &manifest)
-	if manifest.FormatVersion != "1.3.0" {
+	if manifest.FormatVersion != "1.4.0" {
 		t.Fatalf("manifest version %s", manifest.FormatVersion)
 	}
 	var path string

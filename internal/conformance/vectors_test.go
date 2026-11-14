@@ -182,8 +182,8 @@ func TestManifestSuiteRegistryFailsClosed(t *testing.T) {
 		Malformed []json.RawMessage `json:"malformed"`
 	}
 	decodeStrict(t, "manifest-v1.json", &manifest)
-	want := []string{"spec_match:spec-match-v1.json", "int128:int128-v1.json", "enforcement_gate:enforcement-gate-v1.json", "otlp_signal:otlp-signal-v1.json", "sequence_completeness:sequence-completeness-v1.json"}
-	if manifest.FormatVersion != "1.3.0" || len(manifest.Suites) != len(want) {
+	want := []string{"spec_match:spec-match-v1.json", "int128:int128-v1.json", "enforcement_gate:enforcement-gate-v1.json", "otlp_signal:otlp-signal-v1.json", "sequence_completeness:sequence-completeness-v1.json", "decision_wait:decision-wait-v1.json", "filter_store:filter-store-v1.json"}
+	if manifest.FormatVersion != "1.4.0" || len(manifest.Suites) != len(want) {
 		t.Fatal("unsupported manifest")
 	}
 	for index, entry := range manifest.Suites {
