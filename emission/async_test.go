@@ -33,6 +33,8 @@ type stubReply struct {
 	body     string
 	rejected int64
 	message  string
+	// retryAfter is sent as the Retry-After header when set.
+	retryAfter string
 }
 
 func newStub(t *testing.T, handler func(n int) stubReply) *sentinelStub {
@@ -58,6 +60,9 @@ func newStub(t *testing.T, handler func(n int) stubReply) *sentinelStub {
 			}})
 		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
+		if reply.retryAfter != "" {
+			w.Header().Set("Retry-After", reply.retryAfter)
+		}
 		w.WriteHeader(reply.status)
 		_, _ = w.Write(body)
 	}))
@@ -284,11 +289,93 @@ func TestRetryWithBackoffOnTransportErrorsThenSucceeds(t *testing.T) {
 		t.Fatalf("backoffs = %v", *rig.sleeps)
 	}
 	first, second := (*rig.sleeps)[0], (*rig.sleeps)[1]
-	if first < 80*time.Millisecond || first > 120*time.Millisecond || second < 160*time.Millisecond || second > 240*time.Millisecond {
+	if first < 50*time.Millisecond || first > 100*time.Millisecond || second < 100*time.Millisecond || second > 200*time.Millisecond {
 		t.Fatalf("backoff did not double with bounded jitter: %v", *rig.sleeps)
 	}
 	if len(rig.errors.codes) != 0 {
 		t.Fatalf("a recovered export must not be reported: %v", rig.errors.codes)
+	}
+}
+
+func TestDefaultsFollowTheStandardRetryPolicy(t *testing.T) {
+	// 5 attempts, 100 ms base, 5 s cap: the same in every Probe SDK (sdk/README.md).
+	stub := newStub(t, func(int) stubReply { return stubReply{status: http.StatusServiceUnavailable} })
+	rig := newRig(t, stub.URL, emission.AsyncOptions{})
+	rig.emit("a")
+	rig.flush(t)
+	if stub.count() != 5 {
+		t.Fatalf("attempts = %d, want 5", stub.count())
+	}
+	sleeps := *rig.sleeps
+	if len(sleeps) != 4 {
+		t.Fatalf("backoffs = %v", sleeps)
+	}
+	for i, ceiling := range []time.Duration{100, 200, 400, 800} {
+		if ceiling *= time.Millisecond; sleeps[i] < ceiling/2 || sleeps[i] > ceiling {
+			t.Fatalf("backoff %d = %v, want within [%v, %v]", i, sleeps[i], ceiling/2, ceiling)
+		}
+	}
+	expectSlots(t, rig, 1, 0)
+}
+
+func TestRetryableStatusesAreRetriedAndOthersAreFinal(t *testing.T) {
+	for status, retried := range map[int]bool{
+		408: true, 425: true, 429: true, 500: true, 502: true, 503: true, 504: true,
+		400: false, 401: false, 403: false, 404: false, 409: false, 413: false, 422: false, 501: false, 505: false,
+	} {
+		stub := newStub(t, func(n int) stubReply {
+			if n == 1 {
+				return stubReply{status: status}
+			}
+			return stubReply{}
+		})
+		rig := newRig(t, stub.URL, emission.AsyncOptions{})
+		rig.emit("a")
+		rig.flush(t)
+		if retried {
+			expectSlots(t, rig, 1, 1)
+			if stub.count() != 2 {
+				t.Errorf("status %d: attempts = %d, want 2", status, stub.count())
+			}
+		} else {
+			expectSlots(t, rig, 1, 0)
+			if stub.count() != 1 {
+				t.Errorf("status %d: attempts = %d, want 1 (final)", status, stub.count())
+			}
+		}
+	}
+}
+
+func TestRetryAfterIsHonoredOn429And503AndCapped(t *testing.T) {
+	for _, tc := range []struct {
+		status     int
+		retryAfter string
+		want       time.Duration
+	}{
+		{http.StatusTooManyRequests, "2", 2 * time.Second},
+		{http.StatusServiceUnavailable, "3600", 5 * time.Second},
+		{http.StatusInternalServerError, "4", 0}, // not honored on a 500: plain backoff
+	} {
+		stub := newStub(t, func(n int) stubReply {
+			if n == 1 {
+				return stubReply{status: tc.status, retryAfter: tc.retryAfter}
+			}
+			return stubReply{}
+		})
+		rig := newRig(t, stub.URL, emission.AsyncOptions{})
+		rig.emit("a")
+		rig.flush(t)
+		sleeps := *rig.sleeps
+		if len(sleeps) != 1 {
+			t.Fatalf("status %d: backoffs = %v", tc.status, sleeps)
+		}
+		if tc.want == 0 {
+			if sleeps[0] > 100*time.Millisecond {
+				t.Fatalf("status %d: Retry-After wrongly honored: %v", tc.status, sleeps[0])
+			}
+		} else if sleeps[0] != tc.want {
+			t.Fatalf("status %d: wait = %v, want %v", tc.status, sleeps[0], tc.want)
+		}
 	}
 }
 

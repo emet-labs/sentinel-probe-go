@@ -139,7 +139,8 @@ cause) and is logged at most once per `ErrorLogInterval` (default 10 s). Tune it
 - **Overflow.** The queue holds `QueueSize` spans (2048). A span that ends while it is full is dropped,
   not waited for, and its slot is FAILED (`queue-full`).
 - **Retry.** A batch is retried up to `MaxAttempts` (5) times with exponential backoff and jitter on
-  transport errors and HTTP 408/425/429/5xx only. A contract failure, a 400/403 and a Sentinel
+  transport errors and HTTP 408/425/429/500/502/503/504 only (a `Retry-After` on a 429 or 503 is honored, capped at
+  `MaxBackoff`; the policy is in [`../README.md`](../README.md)). A contract failure, a 400/403 and a Sentinel
   rejection get the same answer again and are not retried. After the last attempt the slots are FAILED
   and the spans stay in a buffer of `RetainFailed` (1024) that is retried every `RetryFailedInterval`
   (30 s) and once at shutdown, so `complete_through` catches up when Sentinel returns.

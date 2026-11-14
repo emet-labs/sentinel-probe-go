@@ -58,7 +58,10 @@ func TestExportErrorCarriesTheResponseBody(t *testing.T) {
 }
 
 func TestRetryableClassification(t *testing.T) {
-	for status, want := range map[int]bool{400: false, 401: false, 403: false, 404: false, 408: true, 429: true, 500: true, 503: true} {
+	for status, want := range map[int]bool{
+		400: false, 401: false, 403: false, 404: false, 409: false, 501: false, 505: false,
+		408: true, 425: true, 429: true, 500: true, 502: true, 503: true, 504: true,
+	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
 		exporter, _ := otlp.NewTraceExporter(otlp.TraceConfig{Endpoint: server.URL, SourceHandle: "h"})
 		err := exporter.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{validSpan()})

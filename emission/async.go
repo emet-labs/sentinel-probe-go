@@ -32,7 +32,7 @@ const (
 	// ExportDuplicateEventID: Sentinel already holds an Event under this id and refused the redelivery as a
 	// conflict. The slot stays FAILED; see the Duplicate Event id policy on AsyncOptions.
 	ExportDuplicateEventID = "duplicate-event-id"
-	// ExportTransportExhausted: every attempt failed with a transport error or HTTP 408/425/429/5xx. The slot is
+	// ExportTransportExhausted: every attempt failed with a transport error or HTTP 408/425/429/500/502/503/504. The slot is
 	// FAILED and the span is kept for a later retry (AsyncOptions.RetainFailed).
 	ExportTransportExhausted = "transport-exhausted"
 	// ExportRetentionOverflow: the buffer of failed spans was full, so the oldest was dropped. Its slot stays FAILED
@@ -75,8 +75,9 @@ func (e *ExportError) Unwrap() error { return e.Err }
 // blocked on, and its Sequence slot is marked FAILED, so complete_through stops before it and Sentinel sees an
 // honest gap (never a silent pass). The drop is reported as ExportQueueFull.
 //
-// Retry policy: a batch that fails with a transport error or HTTP 408/425/429/5xx is retried up to MaxAttempts
-// times with exponential backoff (InitialBackoff doubling to MaxBackoff, with jitter). Nothing else is retried:
+// Retry policy: a batch that fails with a transport error or HTTP 408/425/429/500/502/503/504 is retried up to
+// MaxAttempts times with exponential backoff (InitialBackoff doubling to MaxBackoff, with jitter; a Retry-After
+// on a 429 or 503 raises the wait, never past MaxBackoff). Nothing else is retried:
 // a contract or encode failure and a Sentinel rejection get the same answer every time. After the last attempt
 // the slots are FAILED and the spans move to a buffer of up to RetainFailed spans that is retried every
 // RetryFailedInterval and once at Shutdown, so complete_through catches up when Sentinel returns. A slot marked
@@ -100,7 +101,7 @@ type AsyncOptions struct {
 	BatchSize int
 	// MaxAttempts is the attempts per batch, including the first. Zero means 5.
 	MaxAttempts int
-	// InitialBackoff is the wait before the second attempt. Zero means 200 ms.
+	// InitialBackoff is the wait before the second attempt. Zero means 100 ms.
 	InitialBackoff time.Duration
 	// MaxBackoff caps the wait between attempts. Zero means 5 s.
 	MaxBackoff time.Duration
@@ -123,7 +124,7 @@ func (o AsyncOptions) withDefaults() AsyncOptions {
 		o.MaxAttempts = 5
 	}
 	if o.InitialBackoff <= 0 {
-		o.InitialBackoff = 200 * time.Millisecond
+		o.InitialBackoff = 100 * time.Millisecond
 	}
 	if o.MaxBackoff <= 0 {
 		o.MaxBackoff = 5 * time.Second
@@ -392,7 +393,7 @@ func (p *AsyncProcessor) deliver(ctx context.Context, spans []sdktrace.ReadOnlyS
 			p.exhausted(spans, err, fromRetained)
 			return
 		}
-		if sleepErr := p.options.Sleep(ctx, p.backoff(attempt)); sleepErr != nil {
+		if sleepErr := p.options.Sleep(ctx, p.backoff(attempt, retryAfterOf(err))); sleepErr != nil {
 			p.exhausted(spans, fmt.Errorf("%w (gave up waiting to retry: %v)", err, sleepErr), fromRetained)
 			return
 		}
@@ -445,13 +446,25 @@ func isDuplicateEventID(message string) bool {
 	return strings.Contains(message, "evidence_conflict") || strings.Contains(message, "identity_conflict")
 }
 
-func (p *AsyncProcessor) backoff(attempt int) time.Duration {
+// retryAfterOf is the server's Retry-After carried by a retryable HTTP answer, else zero.
+func retryAfterOf(err error) time.Duration {
+	var status *otlp.HTTPStatusError
+	if errors.As(err, &status) {
+		return status.RetryAfter
+	}
+	return 0
+}
+
+// backoff is the wait before attempt+1: exponential with jitter (50-100% of the step), raised to the server's
+// Retry-After when it asks for longer, and never past MaxBackoff.
+func (p *AsyncProcessor) backoff(attempt int, retryAfter time.Duration) time.Duration {
 	d := p.options.InitialBackoff
 	for i := 1; i < attempt && d < p.options.MaxBackoff; i++ {
 		d *= 2
 	}
 	d = min(d, p.options.MaxBackoff)
-	return d - d/5 + time.Duration(rand.Int64N(int64(d/5)*2+1))
+	d = d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
+	return min(p.options.MaxBackoff, max(d, retryAfter))
 }
 
 // exhausted handles a batch whose every attempt failed retryably: FAILED now, retained for later.
