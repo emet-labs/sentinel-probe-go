@@ -1,6 +1,7 @@
 package client
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 
@@ -175,10 +176,177 @@ func TestFilterStoreShouldRefreshComparesEpochs(t *testing.T) {
 
 	store := NewFilterStore(makeFilter(u64(5)))
 	if !store.ShouldRefresh(u64(6)) {
-		t.Fatal("a differing epoch must refresh")
+		t.Fatal("a newer epoch must refresh")
 	}
 	if store.ShouldRefresh(u64(5)) {
 		t.Fatal("an equal epoch must not refresh")
+	}
+	if store.ShouldRefresh(u64(4)) {
+		t.Fatal("an older epoch must not refresh")
+	}
+	high := NewFilterStore(makeFilter(u64(1 << 63)))
+	if high.ShouldRefresh(u64(1<<63 - 1)) {
+		t.Fatal("epochs compare unsigned: 2^63-1 is older than 2^63")
+	}
+	if !high.ShouldRefresh(u64(^uint64(0))) {
+		t.Fatal("2^64-1 is newer than 2^63")
+	}
+	if !NewFilterStore(makeFilter(nil)).ShouldRefresh(u64(1)) {
+		t.Fatal("an epoch-less held filter must refresh")
+	}
+}
+
+func TestFilterStoreRefusesALowerEpoch(t *testing.T) {
+	t.Parallel()
+
+	store := NewFilterStore(nil)
+	held := makeFilter(u64(5))
+	store.Set(held)
+	if store.Set(makeFilter(u64(4))) {
+		t.Fatal("a lower epoch must be refused")
+	}
+	if store.Get() != held {
+		t.Fatal("a refused Set must keep the held pointer")
+	}
+	if store.Set(makeFilter(u64(0))) {
+		t.Fatal("epoch 0 after a higher epoch must be refused")
+	}
+	if store.Get() != held {
+		t.Fatal("a refused Set must keep the held pointer")
+	}
+}
+
+func TestFilterStoreRefusesAnEpochlessFilterAfterAnEpoch(t *testing.T) {
+	t.Parallel()
+
+	for _, epoch := range []uint64{5, 0} {
+		held := makeFilter(u64(epoch))
+		store := NewFilterStore(held)
+		if store.Set(makeFilter(nil)) {
+			t.Fatalf("an epoch-less filter after epoch %d must be refused", epoch)
+		}
+		if store.Set(nil) {
+			t.Fatalf("a nil filter after epoch %d must be refused", epoch)
+		}
+		if store.Get() != held {
+			t.Fatal("a refused Set must keep the held pointer")
+		}
+	}
+}
+
+func TestFilterStoreHigherEpochAfterZeroReplaces(t *testing.T) {
+	t.Parallel()
+
+	store := NewFilterStore(makeFilter(u64(0)))
+	next := makeFilter(u64(1))
+	if !store.Set(next) || store.Get() != next {
+		t.Fatal("epoch 1 must replace epoch 0")
+	}
+}
+
+func TestFilterStoreFirstSetAppliesAnyEpoch(t *testing.T) {
+	t.Parallel()
+
+	for _, epoch := range []*uint64{u64(7), u64(0), nil} {
+		store := NewFilterStore(nil)
+		first := makeFilter(epoch)
+		if !store.Set(first) || store.Get() != first {
+			t.Fatalf("first Set with epoch %v must apply", epoch)
+		}
+	}
+}
+
+func TestFilterStoreOrdersEpochsUnsigned(t *testing.T) {
+	t.Parallel()
+
+	store := NewFilterStore(nil)
+	for _, epoch := range []uint64{1<<63 - 1, 1 << 63, ^uint64(0)} {
+		if !store.Set(makeFilter(u64(epoch))) {
+			t.Fatalf("epoch %d must replace the lower held epoch", epoch)
+		}
+	}
+	top := store.Get()
+	if store.Set(makeFilter(u64(1 << 63))) {
+		t.Fatal("2^63 after 2^64-1 must be refused")
+	}
+	if store.Get() != top {
+		t.Fatal("a refused Set must keep the held pointer")
+	}
+}
+
+func TestFilterStoreSeededStoreRefusesRegression(t *testing.T) {
+	t.Parallel()
+
+	seed := makeFilter(u64(9))
+	store := NewFilterStore(seed)
+	if store.Set(makeFilter(u64(8))) || store.Get() != seed {
+		t.Fatal("a seeded store must refuse a lower epoch")
+	}
+}
+
+func TestFilterStoreRefusalDoesNotMoveLaterComparisons(t *testing.T) {
+	t.Parallel()
+
+	store := NewFilterStore(makeFilter(u64(5)))
+	if store.Set(makeFilter(u64(2))) || store.Set(makeFilter(u64(3))) {
+		t.Fatal("lower epochs must be refused")
+	}
+	if store.ShouldRefresh(u64(4)) {
+		t.Fatal("a refused Set must not lower the comparison point")
+	}
+	six := makeFilter(u64(6))
+	if !store.Set(six) || store.Get() != six {
+		t.Fatal("epoch 6 must replace epoch 5")
+	}
+}
+
+// TestFilterStoreConcurrentSetsEndAtTheHighestEpoch pins the compare-and-swap loop: racing
+// Sets of 1..N in any order must end holding N, and no observer ever sees the epoch
+// decrease. Run under `go test -race`.
+func TestFilterStoreConcurrentSetsEndAtTheHighestEpoch(t *testing.T) {
+	t.Parallel()
+
+	const writers, perWriter = 8, 250
+	store := NewFilterStore(nil)
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	observed := make(chan error, 1)
+	go func() {
+		var last uint64
+		for {
+			select {
+			case <-done:
+				observed <- nil
+				return
+			default:
+			}
+			if epoch := store.Epoch(); epoch != nil {
+				if *epoch < last {
+					observed <- fmt.Errorf("epoch went from %d to %d", last, *epoch)
+					return
+				}
+				last = *epoch
+			}
+		}
+	}()
+	for w := range writers {
+		wg.Add(1)
+		go func(offset uint64) {
+			defer wg.Done()
+			// Each writer walks its residue class downward, so writers keep offering
+			// epochs below the current maximum.
+			for i := uint64(perWriter); i > 0; i-- {
+				store.Set(makeFilter(u64((i-1)*writers + offset + 1)))
+			}
+		}(uint64(w))
+	}
+	wg.Wait()
+	close(done)
+	if err := <-observed; err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Epoch(); got == nil || *got != writers*perWriter {
+		t.Fatalf("Epoch = %v, want %d", got, writers*perWriter)
 	}
 }
 
@@ -263,25 +431,27 @@ func TestFilterStoreConcurrentGetSet(t *testing.T) {
 	wg.Wait()
 }
 
-func TestEqualEpoch(t *testing.T) {
+func TestReplaces(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name string
-		a, b *uint64
-		want bool
+		name          string
+		held, offered *uint64
+		want          bool
 	}{
-		{"both nil", nil, nil, true},
-		{"left nil", nil, u64(0), false},
-		{"right nil", u64(0), nil, false},
-		{"equal zero", u64(0), u64(0), true},
-		{"equal non-zero", u64(7), u64(7), true},
-		{"different", u64(7), u64(8), false},
-		{"max", u64(^uint64(0)), u64(^uint64(0)), true},
+		{"both absent", nil, nil, false},
+		{"absent held, zero offered", nil, u64(0), true},
+		{"zero held, absent offered", u64(0), nil, false},
+		{"equal zero", u64(0), u64(0), false},
+		{"equal non-zero", u64(7), u64(7), false},
+		{"newer", u64(7), u64(8), true},
+		{"older", u64(8), u64(7), false},
+		{"unsigned top", u64(1 << 63), u64(^uint64(0)), true},
+		{"unsigned below top", u64(^uint64(0)), u64(1 << 63), false},
 	}
 	for _, tc := range cases {
-		if got := equalEpoch(tc.a, tc.b); got != tc.want {
-			t.Errorf("%s: equalEpoch = %v, want %v", tc.name, got, tc.want)
+		if got := replaces(tc.held, tc.offered); got != tc.want {
+			t.Errorf("%s: replaces = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

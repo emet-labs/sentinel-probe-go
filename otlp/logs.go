@@ -172,12 +172,13 @@ func decodeDecision(raw []byte, requestID string) (*probev1.DecideResponse, erro
 	if requestID != decision.GetRequestId() {
 		return nil, refuse("request-id-mismatch", requestID)
 	}
+	// The request id is checked from here on, so a refusal names the ask it fails.
 	if err := requireSpecifiedAction(decision.GetAction(), "action"); err != nil {
-		return nil, err
+		return nil, refuseDecision(requestID, err)
 	}
 	for i, spec := range decision.GetSpecifications() {
 		if err := requireSpecifiedAction(spec.GetAction(), fmt.Sprintf("specification %d", i)); err != nil {
-			return nil, err
+			return nil, refuseDecision(requestID, err)
 		}
 	}
 	return decision, nil

@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"errors"
+	"math"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -15,6 +17,17 @@ import (
 // reads this. It does not dial SentinelDecisionService.
 type Decisions interface {
 	Response(requestID string) (*probev1.DecideResponse, error)
+}
+
+// DecisionWaiter is a Decisions source that can wait for a DecideResponse that
+// has not arrived yet. otlp.Receiver implements it. DecideFunc uses Await when
+// the installed Decisions implements it, and the non-blocking Response
+// otherwise, so an existing Decisions implementation keeps compiling.
+type DecisionWaiter interface {
+	Decisions
+	// Await returns the DecideResponse for requestID, waiting up to budget for
+	// it. A budget of zero arms no wait.
+	Await(ctx context.Context, requestID string, budget time.Duration) (*probev1.DecideResponse, error)
 }
 
 // Config describes the Probe's identity and the Sentinel it talks to.
@@ -68,6 +81,8 @@ func (c *ProbeClient) AcknowledgedEpoch() *uint64 {
 }
 
 // SetFilter swaps in a new EventFilter, reporting whether the store was actually updated.
+// Only a first filter or a strictly newer epoch updates it; an equal epoch is a no-op and an
+// older or epoch-less filter is refused (see FilterStore.Set).
 //
 // Where the new filter comes from is out of SDK scope: in v1 Sentinel pushes filters
 // (ADR-0006) and no push RPC exists in decision.proto, so the host calls SetFilter when a
@@ -108,9 +123,12 @@ func (c *ProbeClient) SourceHandle() string {
 	return c.config.SourceHandle
 }
 
-// DecideFunc adapts the OTLP log receiver to the enforcement gate. A missing
-// receiver or a missing response is an error, and the gate applies the fail
-// mode. This function does not dial SentinelDecisionService.
+// DecideFunc adapts the OTLP log receiver to the enforcement gate. When the
+// installed Decisions is a DecisionWaiter, the ask waits for the matching
+// DecideResponse log for the request's remaining transport budget (ADR-0024),
+// capped by ctx. An absent or zero budget does not wait. A missing receiver, a
+// missing response, or an expired wait is an error, and the gate applies the
+// fail mode. This function does not dial SentinelDecisionService.
 func (c *ProbeClient) DecideFunc() func(context.Context, *probev1.DecideRequest) (*probev1.DecideResponse, error) {
 	return func(ctx context.Context, request *probev1.DecideRequest) (*probev1.DecideResponse, error) {
 		if err := ctx.Err(); err != nil {
@@ -119,8 +137,25 @@ func (c *ProbeClient) DecideFunc() func(context.Context, *probev1.DecideRequest)
 		if c.decisions == nil {
 			return nil, errNoDecisionReceiver
 		}
-		return c.decisions.Response(request.GetRequestId())
+		waiter, ok := c.decisions.(DecisionWaiter)
+		if !ok {
+			return c.decisions.Response(request.GetRequestId())
+		}
+		return waiter.Await(ctx, request.GetRequestId(), waitBudget(request))
 	}
+}
+
+// waitBudget is the request's remaining transport budget as a Duration. Absent
+// is zero, and a budget beyond time.Duration's range is capped at its maximum.
+func waitBudget(request *probev1.DecideRequest) time.Duration {
+	budget := request.RemainingTransportBudgetNanoseconds
+	if budget == nil {
+		return 0
+	}
+	if *budget > math.MaxInt64 {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(*budget)
 }
 
 // errNoDecisionReceiver is returned when the gate asks before SetDecisions.
