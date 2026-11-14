@@ -32,6 +32,14 @@ type Options struct {
 	Endpoint string
 	// SourceHandle is sent as x-sentinel-source-handle. Required when Endpoint is set.
 	SourceHandle string
+	// Sequence is the source's allocator (#461). With it, each span gets
+	// sentinel.sequence.epoch and sentinel.sequence.number when it starts,
+	// unless it already carries both, and the exporter marks the slot from
+	// Sentinel's answer: exported only on HTTP 2xx with zero rejected spans,
+	// failed otherwise. Requires Endpoint. Pass the sequence attributes at
+	// start or not at all: a slot stamped at start and then overwritten is
+	// never marked and holds its epoch open.
+	Sequence *SequenceAllocator
 }
 
 // ProbeTracer bundles the tracer a Probe emits with, its provider, and the conversion into
@@ -75,6 +83,9 @@ func NewProbeTracer(options Options) *ProbeTracer {
 		providerOptions = append(providerOptions, sdktrace.WithResource(merged))
 	}
 
+	if options.Sequence != nil && options.Endpoint == "" {
+		panic("emission: Sequence requires Endpoint: nothing would mark its slots")
+	}
 	if options.Endpoint != "" {
 		exporter, err := otlp.NewTraceExporter(otlp.TraceConfig{
 			Endpoint:     options.Endpoint,
@@ -83,7 +94,14 @@ func NewProbeTracer(options Options) *ProbeTracer {
 		if err != nil {
 			panic("emission: OTLP exporter: " + err.Error())
 		}
-		providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(exporter)))
+		var spanExporter sdktrace.SpanExporter = exporter
+		if options.Sequence != nil {
+			// The stamper runs before the exporting processor, so every span
+			// it exports already carries its slot.
+			providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(sequenceStamper{allocator: options.Sequence}))
+			spanExporter = sequenceExporter{exporter: exporter, allocator: options.Sequence}
+		}
+		providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(spanExporter)))
 	}
 
 	provider := sdktrace.NewTracerProvider(providerOptions...)

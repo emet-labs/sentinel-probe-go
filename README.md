@@ -63,6 +63,57 @@ probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
 `filter.proto` is in proto package `sentinel.model.v1`, so `EventFilter`,
 `SpecificationFilter`, `FailMode` and `DeliveryMode` all live under `modelv1`.
 
+## Sequence numbers and completeness
+
+`emission.SequenceAllocator` and `otlp.CompletenessHeartbeat` (#461) give a source its
+`(Sequence Epoch, sequence number)` slots and its producer completeness signal, so a host
+does not hand-roll either.
+
+```go
+allocator, err := emission.NewSequenceAllocator(emission.SequenceOptions{})
+tracer := emission.NewProbeTracer(emission.Options{
+	TracerName: "sagashop-order", Endpoint: base, SourceHandle: "sagashop-order",
+	Sequence: allocator,
+})
+heartbeat, err := otlp.NewCompletenessHeartbeat(otlp.HeartbeatConfig{
+	Source: allocator, FilterEpoch: filterStore.Epoch,
+	Endpoint: base, SourceHandle: "sagashop-order",
+})
+go heartbeat.Run(ctx) // every 15 s by default
+```
+
+- **Slots.** With `Options.Sequence`, each span gets `sentinel.sequence.epoch` and
+  `sentinel.sequence.number` when it starts, unless it already carries both (a slot the
+  host reserved with `Allocate`). The slot is marked from Sentinel's answer: exported only
+  on HTTP 2xx with zero `partial_success.rejected_spans`
+  (`TraceExporter.ExportSpansChecked`, `otlp.RejectedSpans`); failed on any other answer,
+  an undecodable body or a client-side refusal. Pass the sequence attributes at start or
+  not at all.
+- **What the signal says.** `last_emitted` is the highest number allocated.
+  `complete_through` is the highest number below which every slot was exported, so it
+  never runs ahead of a successful export. A failed slot is not retried. It holds
+  `complete_through` until the host re-exports the same Event and calls `MarkExported`.
+  A slot the Event Filter dropped (`MarkFiltered`) also holds it until #542.
+- **One Sequence Epoch per quiet period.** A report that finds nothing in flight declares
+  a close (`complete_through == last_emitted`), and Sentinel refuses a closed epoch that
+  advances. So the allocator seals the epoch, and the next `Allocate` opens
+  `max(epoch + 1, clock Unix ms)`. Sentinel evaluates each source's latest epoch, so a
+  Binding whose Events straddle a roll of one source is Inconclusive, never a pass.
+  Only the epoch current when a Filter is published can settle Authoritative. A source
+  that is quiet at publication and wants Authoritative Verdicts should `Allocate` first and
+  start the Event's span later with that slot.
+- **Restarts.** The first epoch is the clock's Unix milliseconds. Persist the last epoch and
+  pass it as `PreviousEpoch` to guarantee a strictly greater epoch when the clock steps
+  back; without it Sentinel refuses the regressed epoch (`RegressedEpoch`, HTTP 409).
+- **Heartbeats are restatements.** Between quiet reports only `producer_reported_at`
+  changes, so Sentinel writes no Verdict revision. `producer_reported_at` never goes
+  backwards and never precedes `activity_since`. `DeclareIdle` and `DeclareActive` set the
+  activity; the next allocation ends an idle. A regressed acknowledged Filter epoch is
+  never sent: `OnError` receives `HeartbeatFilterEpochRegressed`.
+- **Stopping.** Cancelling `Run`'s context ends the schedule. `Shutdown` sends one final
+  report, which is a close only if nothing is unresolved, then stops. `Stop` makes the
+  source go silent and sends nothing more.
+
 ## Divergences from the TypeScript reference
 
 Deliberate, so a reviewer can check them off rather than flag them as omissions. Criterion 4
