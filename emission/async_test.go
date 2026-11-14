@@ -381,25 +381,35 @@ func TestShutdownHonoursItsContext(t *testing.T) {
 	expectSlots(t, rig, 1, 0)
 }
 
-func TestDuplicateEventIDDoesNotWedgeCompleteThrough(t *testing.T) {
-	stub := newStub(t, func(n int) stubReply {
-		if n == 2 {
-			return stubReply{rejected: 1, message: "append_events conflicted: evidence_conflict"}
-		}
-		return stubReply{}
-	})
-	rig := newRig(t, stub.URL, emission.AsyncOptions{BatchSize: 1})
-	rig.emit("a")
-	rig.flush(t)
-	rig.emit("a") // an idempotent retry that re-runs the step under the same Event id
-	rig.emit("b")
-	rig.flush(t)
-	expectSlots(t, rig, 3, 3)
-	if !rig.errors.has(emission.ExportDuplicateEventID) {
-		t.Fatalf("no duplicate-event-id report: %v", rig.errors.codes)
-	}
-	if rig.tracer.Exporter.Stats().Duplicates != 1 {
-		t.Fatalf("stats %+v", rig.tracer.Exporter.Stats())
+func TestDuplicateEventIDKeepsTheSlotFailed(t *testing.T) {
+	for _, kind := range []string{"evidence_conflict", "identity_conflict"} {
+		t.Run(kind, func(t *testing.T) {
+			stub := newStub(t, func(n int) stubReply {
+				if n == 2 {
+					return stubReply{rejected: 1, message: "append_events conflicted: " + kind}
+				}
+				return stubReply{}
+			})
+			rig := newRig(t, stub.URL, emission.AsyncOptions{BatchSize: 1})
+			rig.emit("a")
+			rig.flush(t)
+			rig.emit("a") // an idempotent retry that re-runs the step under the same Event id: slot 2 is refused
+			rig.emit("b")
+			rig.flush(t)
+			// Slots 1 and 3 exported; slot 2 FAILED, so complete_through stops at 1.
+			expectSlots(t, rig, 3, 1)
+			if !rig.errors.has(emission.ExportDuplicateEventID) {
+				t.Fatalf("no duplicate-event-id report: %v", rig.errors.codes)
+			}
+			if rig.tracer.Exporter.Stats().Duplicates != 1 {
+				t.Fatalf("stats %+v", rig.tracer.Exporter.Stats())
+			}
+			// Not retried: three spans, three requests, even after a flush that would retry retained spans.
+			rig.flush(t)
+			if got := stub.count(); got != 3 {
+				t.Fatalf("requests = %d, want 3 (a duplicate refusal must not start a retry loop)", got)
+			}
+		})
 	}
 }
 

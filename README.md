@@ -145,10 +145,11 @@ cause) and is logged at most once per `ErrorLogInterval` (default 10 s). Tune it
   (30 s) and once at shutdown, so `complete_through` catches up when Sentinel returns.
 - **A bad span among good ones** is isolated by sending the batch's spans one by one.
 - **Duplicate Event id.** Sentinel refuses a redelivery of an Event id it already holds under other
-  content (`evidence_conflict`, `identity_conflict`). Retrying cannot change the answer and a FAILED slot
-  would stop `complete_through` for the whole epoch, so the slot is released as exported and the refusal
-  is reported as `duplicate-event-id`; the Event under that id stays what Sentinel accepted first.
-  Any other rejection (`slot_conflict`, a closed boundary) leaves the slot FAILED.
+  content (`evidence_conflict`, `identity_conflict`). The refusal is deterministic, so it is not
+  retried, and the slot stays FAILED: that slot number never reached Sentinel as an Event, so
+  `complete_through` does not pass it (missing evidence never looks complete). The refusal is reported
+  as `duplicate-event-id`; the Event under that id stays what Sentinel accepted first. Any other
+  deterministic rejection (`slot_conflict`, a closed boundary) also leaves the slot FAILED.
 - **Shutdown.** `ProbeTracer.Shutdown(ctx)` (or `Provider.Shutdown`) flushes the queue, retries retained
   spans once and stops. Call it before the heartbeat's own `Shutdown` so the final report declares what
   was exported. `Provider.ForceFlush` flushes the queue without stopping.

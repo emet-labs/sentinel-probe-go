@@ -30,7 +30,7 @@ const (
 	// ExportRejected: Sentinel answered 2xx but rejected the span (partial_success.rejected_spans).
 	ExportRejected = "rejected"
 	// ExportDuplicateEventID: Sentinel already holds an Event under this id and refused the redelivery as a
-	// conflict. The slot is released as resolved; see the Duplicate Event id policy on AsyncOptions.
+	// conflict. The slot stays FAILED; see the Duplicate Event id policy on AsyncOptions.
 	ExportDuplicateEventID = "duplicate-event-id"
 	// ExportTransportExhausted: every attempt failed with a transport error or HTTP 408/425/429/5xx. The slot is
 	// FAILED and the span is kept for a later retry (AsyncOptions.RetainFailed).
@@ -82,12 +82,13 @@ func (e *ExportError) Unwrap() error { return e.Err }
 // RetryFailedInterval and once at Shutdown, so complete_through catches up when Sentinel returns. A slot marked
 // FAILED can still become exported later. A redelivery is idempotent at Sentinel.
 //
-// Duplicate Event id policy: Sentinel refuses a second delivery of an Event id it already accepted with a
-// different content or slot (partial_success names evidence_conflict or identity_conflict). The id's evidence
-// is already held, and retrying cannot change the answer, so leaving the slot FAILED would stop complete_through
-// for the whole epoch. The exporter therefore releases the slot as exported and reports ExportDuplicateEventID.
-// The Event under that id stays whatever Sentinel accepted first. A refusal for any other reason
-// (slot_conflict, admission, a closed boundary) leaves the slot FAILED.
+// Duplicate Event id policy: Sentinel refuses a second delivery of an Event id it already holds with a
+// different content or slot (partial_success names evidence_conflict or identity_conflict). The refusal is
+// deterministic, so it is not retried, and the slot stays FAILED: that slot number never reached Sentinel as
+// an Event, so declaring complete_through past it would overstate completeness. Missing evidence must never
+// look complete. The refusal is reported as ExportDuplicateEventID. The Event under that id stays whatever
+// Sentinel accepted first. Every other deterministic rejection (slot_conflict, admission, a closed boundary)
+// also leaves the slot FAILED and is not retried.
 type AsyncOptions struct {
 	// Synchronous exports on the goroutine that ends the span, with one attempt and no retry buffer. It exists for
 	// tests and one-shot tools: a slow Sentinel then slows span.End(). Everything else about the span-end path
@@ -427,8 +428,7 @@ func (p *AsyncProcessor) deliver(ctx context.Context, spans []sdktrace.ReadOnlyS
 		cause := otlp.DescribeRejection(result.Rejected, 1, result.Message)
 		if isDuplicateEventID(result.Message) {
 			p.duplicates.Add(1)
-			p.markExported(spans[0])
-			p.reportSpan(spans[0], ExportDuplicateEventID, cause)
+			p.failOnce(spans[0], ExportDuplicateEventID, cause, fromRetained)
 			return
 		}
 		p.failOnce(spans[0], ExportRejected, cause, fromRetained)
