@@ -40,6 +40,9 @@ type Options struct {
 	// start or not at all: a slot stamped at start and then overwritten is
 	// never marked and holds its epoch open.
 	Sequence *SequenceAllocator
+	// Export relaxes the span contract where a strict refusal would block a mixed deployment, for example
+	// AllowUnattributedRemoteParent for a service whose callers are not all Probes. Requires Endpoint.
+	Export otlp.ExportOptions
 }
 
 // ProbeTracer bundles the tracer a Probe emits with, its provider, and the conversion into
@@ -90,6 +93,7 @@ func NewProbeTracer(options Options) *ProbeTracer {
 		exporter, err := otlp.NewTraceExporter(otlp.TraceConfig{
 			Endpoint:     options.Endpoint,
 			SourceHandle: options.SourceHandle,
+			Export:       options.Export,
 		})
 		if err != nil {
 			panic("emission: OTLP exporter: " + err.Error())

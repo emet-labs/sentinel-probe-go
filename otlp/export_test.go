@@ -125,6 +125,67 @@ func TestExportRefusesSpanIDPredecessor(t *testing.T) {
 	}
 }
 
+// A remote parent with no sentinel.parent.event.id is a caller that is not a Probe (a browser, a curl). It is
+// refused by default, exported with no causal edge under AllowUnattributedRemoteParent, and a LOCAL parent
+// without the id stays refused either way: the host owns that edge.
+func TestExportUnattributedRemoteParent(t *testing.T) {
+	start := time.Unix(1_700_000_000, 0).UTC()
+	span := func(remote bool) sdktrace.ReadOnlySpan {
+		return tracetest.SpanStub{
+			Name:      "sagashop.payment.charge",
+			StartTime: start,
+			EndTime:   start.Add(time.Millisecond),
+			Parent: trace.NewSpanContext(trace.SpanContextConfig{
+				TraceID: traceID("0102030405060708090a0b0c0d0e0f10"),
+				SpanID:  spanID("1112131415161718"),
+				Remote:  remote,
+			}),
+			Attributes: contractAttrs("01f0c0ffee-charge", 2, 4, ""),
+		}.Snapshot()
+	}
+	for _, tc := range []struct {
+		name    string
+		remote  bool
+		allow   bool
+		wantErr bool
+	}{
+		{"remote refused by default", true, false, true},
+		{"remote allowed by option", true, true, false},
+		{"local refused despite option", false, true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			posts := 0
+			var gotParentSpanID []byte
+			server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				posts++
+				raw, _ := io.ReadAll(r.Body)
+				var req coltracepb.ExportTraceServiceRequest
+				if err := proto.Unmarshal(raw, &req); err == nil {
+					gotParentSpanID = req.GetResourceSpans()[0].GetScopeSpans()[0].GetSpans()[0].GetParentSpanId()
+				}
+			}))
+			t.Cleanup(server.Close)
+			exporter, err := otlp.NewTraceExporter(otlp.TraceConfig{
+				Endpoint: server.URL, SourceHandle: "shop-payment",
+				Export: otlp.ExportOptions{AllowUnattributedRemoteParent: tc.allow},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = exporter.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{span(tc.remote)})
+			if !tc.wantErr && len(gotParentSpanID) != 0 {
+				t.Fatalf("an unattributed remote parent must leave the span a root on the wire, got parent span id %x", gotParentSpanID)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if wantPosts := map[bool]int{true: 0, false: 1}[tc.wantErr]; posts != wantPosts {
+				t.Fatalf("posts = %d, want %d", posts, wantPosts)
+			}
+		})
+	}
+}
+
 func contractAttrs(eventID string, sequence, filterEpoch int64, parent string) []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		attribute.String(emission.AttributeEventID, eventID),

@@ -25,12 +25,27 @@ import (
 // sentinel.schema.version, sentinel.acknowledged_filter_epoch, and a
 // sentinel.claimed_sensitivity proto enum name other than UNSPECIFIED.
 func BuildExport(spans []sdktrace.ReadOnlySpan) ([]byte, error) {
+	return BuildExportWith(spans, ExportOptions{})
+}
+
+// ExportOptions relaxes BuildExport where a strict refusal would make a mixed deployment impossible.
+type ExportOptions struct {
+	// AllowUnattributedRemoteParent exports a span whose parent is REMOTE and carries no
+	// sentinel.parent.event.id (its caller is not a Probe: a browser, a curl, an uninstrumented
+	// service). The Event is exported with no causal edge to that caller, never with the caller's span id
+	// standing in for an Event id, so a Binding that needs the edge stays Inconclusive. A LOCAL parent
+	// without sentinel.parent.event.id is still refused: the host owns that edge and omitted it.
+	AllowUnattributedRemoteParent bool
+}
+
+// BuildExportWith is BuildExport with options.
+func BuildExportWith(spans []sdktrace.ReadOnlySpan, options ExportOptions) ([]byte, error) {
 	if len(spans) == 0 {
 		return nil, nil
 	}
 	encoded := make([]*tracepb.ResourceSpans, 0, len(spans))
 	for _, span := range spans {
-		resourceSpans, err := encodeSpan(span)
+		resourceSpans, err := encodeSpan(span, options)
 		if err != nil {
 			return nil, err
 		}
@@ -39,7 +54,7 @@ func BuildExport(spans []sdktrace.ReadOnlySpan) ([]byte, error) {
 	return proto.Marshal(&coltracepb.ExportTraceServiceRequest{ResourceSpans: encoded})
 }
 
-func encodeSpan(span sdktrace.ReadOnlySpan) (*tracepb.ResourceSpans, error) {
+func encodeSpan(span sdktrace.ReadOnlySpan, options ExportOptions) (*tracepb.ResourceSpans, error) {
 	if span.EndTime().IsZero() {
 		return nil, refuse("span-not-ended", span.Name())
 	}
@@ -76,7 +91,8 @@ func encodeSpan(span sdktrace.ReadOnlySpan) (*tracepb.ResourceSpans, error) {
 	if err != nil {
 		return nil, err
 	}
-	if span.Parent().IsValid() && fields.parentEventID == "" {
+	if span.Parent().IsValid() && fields.parentEventID == "" &&
+		!(options.AllowUnattributedRemoteParent && span.Parent().IsRemote()) {
 		return nil, refuse("missing-parent-event-id", span.Parent().SpanID().String())
 	}
 	if err := fields.require(); err != nil {
@@ -93,7 +109,9 @@ func encodeSpan(span sdktrace.ReadOnlySpan) (*tracepb.ResourceSpans, error) {
 	}
 
 	var parentSpanID []byte
-	if span.Parent().IsValid() {
+	// Sentinel's receiver refuses a span that names a parent span id but no parent Event id, so an unattributed
+	// remote parent leaves the span a root on the wire. The caller's span id is not Sentinel's to use.
+	if span.Parent().IsValid() && (fields.parentEventID != "" || !span.Parent().IsRemote()) {
 		id := span.Parent().SpanID()
 		parentSpanID = id[:]
 	}

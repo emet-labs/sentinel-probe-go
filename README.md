@@ -114,6 +114,16 @@ go heartbeat.Run(ctx) // every 15 s by default
   report, which is a close only if nothing is unresolved, then stops. `Stop` makes the
   source go silent and sends nothing more.
 
+## Callers that are not Probes
+
+A span whose parent is remote and carries no `sentinel.parent.event.id` (a browser, a curl, an
+uninstrumented or Rust service called it) is refused by default: the export names no causal edge and
+a span id never stands in for an Event id. A service that has such callers sets
+`emission.Options.Export.AllowUnattributedRemoteParent` (or `otlp.TraceConfig.Export`): the Event is then
+exported with no edge to that caller, so a Binding that needs the edge stays Inconclusive instead of the
+whole source's `complete_through` stopping at the refused slot. A local parent without the id is still
+refused.
+
 ## Divergences from the TypeScript reference
 
 Deliberate, so a reviewer can check them off rather than flag them as omissions. Criterion 4

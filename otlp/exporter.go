@@ -18,6 +18,7 @@ type TraceExporter struct {
 	url          string
 	sourceHandle string
 	client       *http.Client
+	options      ExportOptions
 
 	mu     sync.Mutex
 	closed bool
@@ -30,6 +31,8 @@ type TraceConfig struct {
 	Endpoint     string
 	SourceHandle string
 	HTTPClient   *http.Client
+	// Export relaxes the span contract where a strict refusal would block a mixed deployment; see ExportOptions.
+	Export ExportOptions
 }
 
 // NewTraceExporter builds an exporter. A blank handle or a non-HTTP endpoint
@@ -46,7 +49,7 @@ func NewTraceExporter(config TraceConfig) (*TraceExporter, error) {
 	if client == nil {
 		client = &http.Client{Timeout: exportTimeout}
 	}
-	return &TraceExporter{url: target, sourceHandle: config.SourceHandle, client: client}, nil
+	return &TraceExporter{url: target, sourceHandle: config.SourceHandle, client: client, options: config.Export}, nil
 }
 
 // ExportSpans validates the batch and posts it. One refused span posts nothing.
@@ -80,7 +83,7 @@ func (e *TraceExporter) export(ctx context.Context, spans []sdktrace.ReadOnlySpa
 	if closed {
 		return nil, refuse("exporter-closed", "")
 	}
-	body, err := BuildExport(spans)
+	body, err := BuildExportWith(spans, e.options)
 	if err != nil || len(body) == 0 {
 		return nil, err
 	}
