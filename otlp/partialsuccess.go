@@ -16,13 +16,19 @@ import (
 // An export succeeded only on HTTP 2xx with zero rejected spans, so an error
 // here (an undecodable body, or a negative count) is an export failure.
 func RejectedSpans(body []byte) (int64, error) {
+	rejected, _, err := PartialSuccess(body)
+	return rejected, err
+}
+
+// PartialSuccess is RejectedSpans that also returns partial_success.error_message.
+func PartialSuccess(body []byte) (rejected int64, message string, err error) {
 	var response coltracepb.ExportTraceServiceResponse
 	if err := proto.Unmarshal(body, &response); err != nil {
-		return 0, fmt.Errorf("otlp: undecodable trace export response: %w", err)
+		return 0, "", fmt.Errorf("otlp: undecodable trace export response: %w", err)
 	}
-	rejected := response.GetPartialSuccess().GetRejectedSpans()
+	rejected = response.GetPartialSuccess().GetRejectedSpans()
 	if rejected < 0 {
-		return 0, refuse("negative-rejected-spans", fmt.Sprint(rejected))
+		return 0, "", refuse("negative-rejected-spans", fmt.Sprint(rejected))
 	}
-	return rejected, nil
+	return rejected, response.GetPartialSuccess().GetErrorMessage(), nil
 }

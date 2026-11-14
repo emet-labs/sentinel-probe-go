@@ -71,6 +71,27 @@ func (e *TraceExporter) ExportSpansChecked(ctx context.Context, spans []sdktrace
 	return RejectedSpans(answer)
 }
 
+// ExportResult is Sentinel's answer to one accepted (HTTP 2xx) export.
+type ExportResult struct {
+	// Rejected is partial_success.rejected_spans: conflicts, admission refusals and Events above a closed boundary.
+	Rejected int64
+	// Message is partial_success.error_message, for example "append_events conflicted: evidence_conflict". It is
+	// also set when Rejected is 0 (a duplicate redelivery is reported there).
+	Message string
+	// Posted is false when nothing was sent (an empty batch).
+	Posted bool
+}
+
+// ExportSpansResult is ExportSpansChecked that also returns Sentinel's partial_success.error_message.
+func (e *TraceExporter) ExportSpansResult(ctx context.Context, spans []sdktrace.ReadOnlySpan) (ExportResult, error) {
+	answer, err := e.export(ctx, spans, true)
+	if err != nil || answer == nil {
+		return ExportResult{}, err
+	}
+	rejected, message, err := PartialSuccess(answer)
+	return ExportResult{Rejected: rejected, Message: message, Posted: true}, err
+}
+
 // export posts the batch. With read, it returns the response body, and a nil
 // body means nothing was posted; without, it discards the body as it always has.
 func (e *TraceExporter) export(ctx context.Context, spans []sdktrace.ReadOnlySpan, read bool) ([]byte, error) {
@@ -128,12 +149,12 @@ func postProtobuf(ctx context.Context, client *http.Client, target, sourceHandle
 	request.Header.Set(SourceHandleHeader, sourceHandle)
 	response, err := client.Do(request)
 	if err != nil {
-		return fmt.Errorf("otlp: post: %w", err)
+		return &TransportError{Err: err}
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	answer, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return refuse("export-refused", response.Status)
+		return newHTTPStatusError(response, answer)
 	}
 	return nil
 }
@@ -153,12 +174,12 @@ func postProtobufBody(ctx context.Context, client *http.Client, target, sourceHa
 	request.Header.Set(SourceHandleHeader, sourceHandle)
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("otlp: post: %w", err)
+		return nil, &TransportError{Err: err}
 	}
 	defer response.Body.Close()
 	answer, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, refuse("export-refused", response.Status)
+		return nil, newHTTPStatusError(response, answer)
 	}
 	if readErr != nil {
 		return nil, fmt.Errorf("otlp: read response: %w", readErr)

@@ -68,6 +68,8 @@ func sequencedTracer(t *testing.T, endpoint string, allocator *emission.Sequence
 		Endpoint:     endpoint,
 		SourceHandle: "sagashop-payment",
 		Sequence:     allocator,
+		// These tests assert on the slot right after span.End(); the async default has its own tests (async_test.go).
+		Async: emission.AsyncOptions{Synchronous: true},
 		// Host processors are registered before the stamper and the exporter.
 		ProviderOptions: options,
 	})

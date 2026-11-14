@@ -278,6 +278,12 @@ type sequenceStamper struct {
 }
 
 func (s sequenceStamper) OnStart(_ context.Context, span sdktrace.ReadWriteSpan) {
+	// A panic here would reach the host's tracer.Start; the span then exports without a slot and fails.
+	defer func() {
+		if r := recover(); r != nil {
+			otel.Handle(fmt.Errorf("emission: sequence stamper: panic: %v", r))
+		}
+	}()
 	if hasBothSequenceKeys(span.Attributes()) {
 		return
 	}
@@ -295,41 +301,6 @@ func (s sequenceStamper) OnStart(_ context.Context, span sdktrace.ReadWriteSpan)
 func (sequenceStamper) OnEnd(sdktrace.ReadOnlySpan)      {}
 func (sequenceStamper) Shutdown(context.Context) error   { return nil }
 func (sequenceStamper) ForceFlush(context.Context) error { return nil }
-
-// sequenceExporter posts through the TraceExporter and marks each span's slot
-// from Sentinel's answer: exported only on HTTP 2xx with zero rejected spans;
-// failed on any other answer, an undecodable body or a client-side refusal.
-type sequenceExporter struct {
-	exporter  *otlp.TraceExporter
-	allocator *SequenceAllocator
-}
-
-func (e sequenceExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	rejected, err := e.exporter.ExportSpansChecked(ctx, spans)
-	exported := err == nil && rejected == 0
-	for _, span := range spans {
-		slot, ok := slotOf(span)
-		if !ok {
-			continue
-		}
-		if exported {
-			e.allocator.MarkExported(slot)
-		} else {
-			e.allocator.MarkFailed(slot)
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if rejected > 0 {
-		return fmt.Errorf("emission: Sentinel rejected %d of %d spans", rejected, len(spans))
-	}
-	return nil
-}
-
-func (e sequenceExporter) Shutdown(ctx context.Context) error {
-	return e.exporter.Shutdown(ctx)
-}
 
 func slotOf(span sdktrace.ReadOnlySpan) (Slot, bool) {
 	var epoch, number int64

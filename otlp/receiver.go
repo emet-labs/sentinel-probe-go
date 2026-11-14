@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -17,11 +18,13 @@ import (
 
 const uncompressedLimit = 8 << 20
 
-// Receiver is a localhost POST /v1/logs endpoint. It decodes Verdict,
-// EventFilter, and DecideResponse. Unspecified decision actions are not stored.
+// Receiver is a POST /v1/logs endpoint. It decodes Verdict, EventFilter, and
+// DecideResponse. Unspecified decision actions are not stored. It binds
+// loopback unless ListenWith is given another host.
 type Receiver struct {
 	server *http.Server
 	url    string
+	addr   net.Addr
 
 	mu        sync.Mutex
 	verdicts  []*modelv1.Verdict
@@ -29,8 +32,18 @@ type Receiver struct {
 	decisions map[string]*probev1.DecideResponse
 }
 
+// ListenConfig is where a Receiver binds.
+type ListenConfig struct {
+	// Host is the interface to bind. Empty means 127.0.0.1. A Probe in a container that Sentinel reaches over a
+	// network binds "0.0.0.0" (every interface) or the container's own address; loopback inside a container is
+	// not reachable from another container, so Event Filters would never arrive.
+	Host string
+	// Port is the TCP port. Zero picks a free one.
+	Port int
+}
+
 // Listen serves POST /v1/logs on a loopback address. An empty addr uses
-// 127.0.0.1:0. Any other host is refused.
+// 127.0.0.1:0. Any other host is refused; use ListenWith to bind another.
 func Listen(addr string) (*Receiver, error) {
 	if addr == "" {
 		addr = "127.0.0.1:0"
@@ -44,17 +57,63 @@ func Listen(addr string) (*Receiver, error) {
 		_ = listener.Close()
 		return nil, refuse("non-loopback", addr)
 	}
-	receiver := &Receiver{decisions: map[string]*probev1.DecideResponse{}}
+	return serve(listener), nil
+}
+
+// ListenWith serves POST /v1/logs on the configured host and port. The zero ListenConfig is
+// Listen("127.0.0.1:0"). A non-loopback bind exposes an unauthenticated endpoint to whoever can reach the
+// port: bind it only on a network that carries Sentinel and nothing else.
+func ListenWith(config ListenConfig) (*Receiver, error) {
+	host := config.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if config.Port < 0 || config.Port > 65535 {
+		return nil, refuse("invalid-port", strconv.Itoa(config.Port))
+	}
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(config.Port)))
+	if err != nil {
+		return nil, err
+	}
+	return serve(listener), nil
+}
+
+func serve(listener net.Listener) *Receiver {
+	receiver := &Receiver{decisions: map[string]*probev1.DecideResponse{}, addr: listener.Addr()}
 	receiver.server = &http.Server{
 		Handler:           receiver,
 		ReadHeaderTimeout: exportTimeout,
 	}
-	receiver.url = "http://" + listener.Addr().String() + "/v1/logs"
+	// An unspecified bind address (0.0.0.0, ::) is not dialable; advertise loopback for local use. A host
+	// that tells Sentinel where to POST uses LogsURLFor with its own reachable name.
+	host, port, _ := net.SplitHostPort(listener.Addr().String())
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	receiver.url = "http://" + net.JoinHostPort(host, port) + "/v1/logs"
 	go func() { _ = receiver.server.Serve(listener) }()
-	return receiver, nil
+	return receiver
 }
 
-// LogsURL is the http://127.0.0.1:port/v1/logs address Sentinel should POST to.
+// Addr is the address the Receiver is bound to.
+func (r *Receiver) Addr() net.Addr { return r.addr }
+
+// Port is the TCP port the Receiver is bound to.
+func (r *Receiver) Port() int {
+	if tcp, ok := r.addr.(*net.TCPAddr); ok {
+		return tcp.Port
+	}
+	return 0
+}
+
+// LogsURLFor is the /v1/logs address Sentinel should POST to when it reaches this Probe as host, for example
+// the container name on the shared network.
+func (r *Receiver) LogsURLFor(host string) string {
+	return "http://" + net.JoinHostPort(host, strconv.Itoa(r.Port())) + "/v1/logs"
+}
+
+// LogsURL is the http://127.0.0.1:port/v1/logs address for a Sentinel on the same machine (a wildcard bind
+// advertises loopback; see LogsURLFor).
 func (r *Receiver) LogsURL() string { return r.url }
 
 // Close stops the listener.

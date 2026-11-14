@@ -47,6 +47,7 @@ Mirrors `sdk/typescript/src/` one-for-one where Go idioms allow.
 | `config/` | `src/config/` (`source-tier.ts` + `schema.ts`, collapsed) |
 | `int128/` | `src/util/int128.ts` |
 | `ids/` | `src/util/id.ts` |
+| `propagate/` | (Go-first) parent Event id header and tracestate carrier |
 
 There is deliberately **no root `.go` file**: the module directory is literally named `go`,
 and Go has no re-export idiom that would make a barrel package worth the ceremony. This
@@ -91,8 +92,9 @@ go heartbeat.Run(ctx) // every 15 s by default
   not at all.
 - **What the signal says.** `last_emitted` is the highest number allocated.
   `complete_through` is the highest number below which every slot was exported, so it
-  never runs ahead of a successful export. A failed slot is not retried. It holds
-  `complete_through` until the host re-exports the same Event and calls `MarkExported`.
+  never runs ahead of a successful export. A failed slot holds `complete_through`; the
+  default exporter retries it (see "Export is asynchronous and bounded" below), or the host
+  re-exports the same Event and calls `MarkExported`.
   A slot the Event Filter dropped (`MarkFiltered`) also holds it until #542.
 - **One Sequence Epoch per quiet period.** A report that finds nothing in flight declares
   a close (`complete_through == last_emitted`), and Sentinel refuses a closed epoch that
@@ -123,6 +125,61 @@ a span id never stands in for an Event id. A service that has such callers sets
 exported with no edge to that caller, so a Binding that needs the edge stays Inconclusive instead of the
 whole source's `complete_through` stopping at the refused slot. A local parent without the id is still
 refused.
+
+## Export is asynchronous and bounded
+
+With `Options.Endpoint` set, `NewProbeTracer` exports from a bounded queue on its own goroutine
+(`emission.AsyncProcessor`), so an unreachable or slow Sentinel never adds latency to `span.End()`.
+The span-end path never panics, never returns an error into the host, and never blocks: any
+validation, encode or transport failure marks the slot FAILED (`complete_through` never passes
+it), is passed to `Options.OnError` as an `*emission.ExportError` (with `Code`, span name, slot and
+cause) and is logged at most once per `ErrorLogInterval` (default 10 s). Tune it with
+`Options.Async` (`emission.AsyncOptions`):
+
+- **Overflow.** The queue holds `QueueSize` spans (2048). A span that ends while it is full is dropped,
+  not waited for, and its slot is FAILED (`queue-full`).
+- **Retry.** A batch is retried up to `MaxAttempts` (5) times with exponential backoff and jitter on
+  transport errors and HTTP 408/425/429/5xx only. A contract failure, a 400/403 and a Sentinel
+  rejection get the same answer again and are not retried. After the last attempt the slots are FAILED
+  and the spans stay in a buffer of `RetainFailed` (1024) that is retried every `RetryFailedInterval`
+  (30 s) and once at shutdown, so `complete_through` catches up when Sentinel returns.
+- **A bad span among good ones** is isolated by sending the batch's spans one by one.
+- **Duplicate Event id.** Sentinel refuses a redelivery of an Event id it already holds under other
+  content (`evidence_conflict`, `identity_conflict`). Retrying cannot change the answer and a FAILED slot
+  would stop `complete_through` for the whole epoch, so the slot is released as exported and the refusal
+  is reported as `duplicate-event-id`; the Event under that id stays what Sentinel accepted first.
+  Any other rejection (`slot_conflict`, a closed boundary) leaves the slot FAILED.
+- **Shutdown.** `ProbeTracer.Shutdown(ctx)` (or `Provider.Shutdown`) flushes the queue, retries retained
+  spans once and stops. Call it before the heartbeat's own `Shutdown` so the final report declares what
+  was exported. `Provider.ForceFlush` flushes the queue without stopping.
+- `AsyncOptions.Synchronous` exports on the ending goroutine (tests, one-shot tools).
+- Export errors carry Sentinel's response body: `*otlp.HTTPStatusError` has `StatusCode` and `Body`
+  and unwraps to the older `*otlp.Refusal`; `otlp.Retryable(err)` says what the exporter retries.
+
+## Stamping the reserved attributes
+
+The host owns `sentinel.event.id`, `sentinel.parent.event.id`, `sentinel.schema.version`,
+`sentinel.acknowledged_filter_epoch` and `sentinel.claimed_sensitivity`. Setting them per span still
+works. `Options.HostStamp` (`emission.HostStamperOptions`, or `emission.NewHostStamper` as a processor)
+stamps all five at span start so a service does not: an Event id `<handle>:<uuid>`, the parent span's
+Event id (or the remote caller's, below), the schema version, the acknowledged Filter epoch
+(`FilterStore.Epoch`) and the claimed sensitivity. An attribute the host already set is never overwritten.
+
+## Carrying the parent Event id across services
+
+`propagate.InjectParentEventID(carrier, eventID)` and `propagate.ExtractParentEventID(carrier)` write and read
+the `x-sentinel-parent-event-id` header, with the `sentinel` member of `tracestate` as the extract fallback.
+A `propagate.Carrier` is `Get`/`Set` (an `http.Header` fits; wrap Kafka headers in two methods).
+`otel.SetTextMapPropagator(propagate.Propagator{Inner: propagation.TraceContext{}})` does it for every
+instrumented client and server, and `HostStamper` then names the caller's Event as the parent. A caller
+that is not a Probe sends neither, and the callee exports its Event as a root.
+
+## Receiving Event Filters in a container
+
+`otlp.ListenWith(otlp.ListenConfig{Host: "0.0.0.0", Port: 4318})` binds the log receiver on every
+interface (the default `Host` is loopback, and `otlp.Listen` still refuses anything else) so Sentinel can
+POST Event Filters to a Probe in another container. `receiver.LogsURLFor("shop-payment")` is the URL to
+register. The endpoint is unauthenticated: bind it only on a network that carries Sentinel.
 
 ## Divergences from the TypeScript reference
 

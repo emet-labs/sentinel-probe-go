@@ -5,7 +5,10 @@ import (
 	"compress/gzip"
 	"context"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/emet-labs/sentinel/sdk/go/client"
@@ -177,5 +180,63 @@ func gateFilter() *modelv1.EventFilter {
 			Readiness:                modelv1.Readiness_READINESS_ACTIVE,
 			LatencyBudgetNanoseconds: &budget,
 		}},
+	}
+}
+
+func TestListenWithDefaultsToLoopback(t *testing.T) {
+	receiver, err := otlp.ListenWith(otlp.ListenConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	if !strings.HasPrefix(receiver.LogsURL(), "http://127.0.0.1:") || receiver.Port() == 0 {
+		t.Fatalf("url %q port %d", receiver.LogsURL(), receiver.Port())
+	}
+	if tcp, ok := receiver.Addr().(*net.TCPAddr); !ok || !tcp.IP.IsLoopback() {
+		t.Fatalf("bound %v", receiver.Addr())
+	}
+}
+
+// A containerised Probe binds every interface so Sentinel can reach it by container name.
+func TestListenWithBindsAllInterfacesOnAChosenPort(t *testing.T) {
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+
+	receiver, err := otlp.ListenWith(otlp.ListenConfig{Host: "0.0.0.0", Port: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+	if receiver.Port() != port {
+		t.Fatalf("port %d, want %d", receiver.Port(), port)
+	}
+	if tcp := receiver.Addr().(*net.TCPAddr); !tcp.IP.IsUnspecified() {
+		t.Fatalf("bound %v, want the wildcard address", tcp)
+	}
+	if want := "http://sentinel-probe:" + strconv.Itoa(port) + "/v1/logs"; receiver.LogsURLFor("sentinel-probe") != want {
+		t.Fatalf("LogsURLFor = %q, want %q", receiver.LogsURLFor("sentinel-probe"), want)
+	}
+	// Reachable on a non-loopback-named dial, here the loopback address of the wildcard bind.
+	response, err := http.Post(receiver.LogsURL(), "text/plain", strings.NewReader("x"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusUnsupportedMediaType {
+		t.Fatalf("status %d", response.StatusCode)
+	}
+}
+
+func TestListenStillRefusesNonLoopback(t *testing.T) {
+	if receiver, err := otlp.Listen("0.0.0.0:0"); err == nil {
+		_ = receiver.Close()
+		t.Fatal("Listen must keep refusing a non-loopback address")
+	}
+	if _, err := otlp.ListenWith(otlp.ListenConfig{Port: 70000}); err == nil {
+		t.Fatal("an out-of-range port must be refused")
 	}
 }

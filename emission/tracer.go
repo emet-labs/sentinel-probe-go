@@ -1,7 +1,10 @@
 package emission
 
 import (
+	"context"
+	"net/http"
 	"slices"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -43,6 +46,23 @@ type Options struct {
 	// Export relaxes the span contract where a strict refusal would block a mixed deployment, for example
 	// AllowUnattributedRemoteParent for a service whose callers are not all Probes. Requires Endpoint.
 	Export otlp.ExportOptions
+	// Async tunes the default exporter: a bounded queue, batching, retry with backoff, and a retry buffer for
+	// FAILED slots. See AsyncOptions for the overflow, retry and duplicate-Event-id policies. Requires Endpoint.
+	Async AsyncOptions
+	// OnError receives every *ExportError: a dropped, failed, rejected or panicked export. It is called from the
+	// exporter's goroutine (or from span.End() for a drop) and must not block. A panic in it is absorbed.
+	OnError func(error)
+	// ErrorLogInterval rate-limits the default log of export errors to one line per interval (default 10 s). Set
+	// Logf to redirect the log; a negative interval turns the log off.
+	ErrorLogInterval time.Duration
+	// Logf is the log function for export errors. Defaults to log.Printf.
+	Logf func(format string, args ...any)
+	// HTTPClient posts to Sentinel. Default: a client with a 5 s timeout. The timeout bounds one request on the
+	// exporter's goroutine, not span.End().
+	HTTPClient *http.Client
+	// HostStamp, when set, stamps the host-owned reserved attributes at span start; see HostStamper. Leave it nil
+	// to set them yourself on each span.
+	HostStamp *HostStamperOptions
 }
 
 // ProbeTracer bundles the tracer a Probe emits with, its provider, and the conversion into
@@ -50,6 +70,14 @@ type Options struct {
 type ProbeTracer struct {
 	Tracer   trace.Tracer
 	Provider *sdktrace.TracerProvider
+	// Exporter is the default span processor; nil when no Endpoint was set.
+	Exporter *AsyncProcessor
+}
+
+// Shutdown flushes the exporter and stops the provider. Call it before the final completeness heartbeat, so
+// the heartbeat declares what was actually exported.
+func (p *ProbeTracer) Shutdown(ctx context.Context) error {
+	return p.Provider.Shutdown(ctx)
 }
 
 // NewProbeTracer builds a TracerProvider and a tracer for a Probe.
@@ -89,29 +117,38 @@ func NewProbeTracer(options Options) *ProbeTracer {
 	if options.Sequence != nil && options.Endpoint == "" {
 		panic("emission: Sequence requires Endpoint: nothing would mark its slots")
 	}
+	if options.HostStamp != nil {
+		providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(NewHostStamper(*options.HostStamp)))
+	}
+	var async *AsyncProcessor
 	if options.Endpoint != "" {
 		exporter, err := otlp.NewTraceExporter(otlp.TraceConfig{
 			Endpoint:     options.Endpoint,
 			SourceHandle: options.SourceHandle,
 			Export:       options.Export,
+			HTTPClient:   options.HTTPClient,
 		})
 		if err != nil {
 			panic("emission: OTLP exporter: " + err.Error())
 		}
-		var spanExporter sdktrace.SpanExporter = exporter
 		if options.Sequence != nil {
 			// The stamper runs before the exporting processor, so every span
 			// it exports already carries its slot.
 			providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(sequenceStamper{allocator: options.Sequence}))
-			spanExporter = sequenceExporter{exporter: exporter, allocator: options.Sequence}
 		}
-		providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(spanExporter)))
+		var logger *rateLimitedLog
+		if options.ErrorLogInterval >= 0 {
+			logger = newRateLimitedLog(options.ErrorLogInterval, options.Logf)
+		}
+		async = newAsyncProcessor(exporter, options.Sequence, options.Async, options.OnError, logger)
+		providerOptions = append(providerOptions, sdktrace.WithSpanProcessor(async))
 	}
 
 	provider := sdktrace.NewTracerProvider(providerOptions...)
 	return &ProbeTracer{
 		Tracer:   provider.Tracer(options.TracerName),
 		Provider: provider,
+		Exporter: async,
 	}
 }
 

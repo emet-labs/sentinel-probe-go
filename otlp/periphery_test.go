@@ -241,6 +241,7 @@ func newTracer(t *testing.T, base, handle string) *emission.ProbeTracer {
 		ServiceName:  handle,
 		Endpoint:     base,
 		SourceHandle: handle,
+		Async:        emission.AsyncOptions{Synchronous: true},
 	})
 	t.Cleanup(func() {
 		_ = tracer.Provider.Shutdown(context.Background())

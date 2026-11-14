@@ -39,6 +39,7 @@ func TestExporterPostsTraceWithSourceHandle(t *testing.T) {
 		ServiceName:  "sagashop-order",
 		Endpoint:     server.URL,
 		SourceHandle: "sagashop-order",
+		Async:        emission.AsyncOptions{Synchronous: true},
 	})
 	t.Cleanup(func() {
 		if err := tracer.Provider.Shutdown(context.Background()); err != nil {
