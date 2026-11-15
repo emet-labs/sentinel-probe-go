@@ -11,8 +11,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // sdktrace.ReadOnlySpan is a sealed interface (it declares an unexported private() method), so

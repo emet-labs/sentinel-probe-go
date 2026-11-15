@@ -6,8 +6,8 @@ import (
 
 	"pgregory.net/rapid"
 
-	"github.com/emet-labs/sentinel/sdk/go/filter"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/filter"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // The ADR-0006 soundness obligation in executable form, ported from

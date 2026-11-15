@@ -3,7 +3,7 @@ package client
 import (
 	"sync/atomic"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // FilterStore holds the current EventFilter for the Probe's source and tracks the

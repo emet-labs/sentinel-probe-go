@@ -9,8 +9,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
-	"github.com/emet-labs/sentinel/sdk/go/propagate"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/propagate"
 )
 
 // HostStamperOptions configures NewHostStamper.

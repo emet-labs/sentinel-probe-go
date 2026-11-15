@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	"github.com/emet-labs/sentinel/sdk/go/int128"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/int128"
 )
 
 // UnixClockDomain is the producer clock domain every heartbeat signal names.

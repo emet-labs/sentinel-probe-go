@@ -5,7 +5,7 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1/probev1connect"
+	"github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1/probev1connect"
 )
 
 // TransportOptions configures a Connect client for SentinelDecisionService.

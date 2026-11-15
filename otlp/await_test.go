@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emet-labs/sentinel/sdk/go/client"
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/client"
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 )
 
 // scriptedTimer is an injected decision timer. Each arm records the budget and

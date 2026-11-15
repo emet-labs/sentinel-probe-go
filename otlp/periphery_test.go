@@ -19,9 +19,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 )
 
 func TestChargeAndLinkedShipObserveAVerdict(t *testing.T) {

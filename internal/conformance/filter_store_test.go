@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/emet-labs/sentinel/sdk/go/client"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/client"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // The filter_store suite (manifest-v1.json, 1.4.0) runs through the production FilterStore.

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emet-labs/sentinel/sdk/go/client"
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/client"
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 )
 
 // The decision_wait suite (manifest-v1.json, 1.4.0) runs through the production log Receiver

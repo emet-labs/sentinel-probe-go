@@ -1,0 +1,8 @@
+
+¯¬©*C:A
+req-charge-1/
+&sagashop.p4.ship-requires-prior-charge1 2;
+sentinel.payload.type"
+ sentinel.probe.v1.DecideResponse2%
+sentinel.request_id
+req-charge-1

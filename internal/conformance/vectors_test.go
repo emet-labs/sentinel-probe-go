@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	int128codec "github.com/emet-labs/sentinel/sdk/go/int128"
-	"github.com/emet-labs/sentinel/sdk/go/internal/specmatch"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
+	int128codec "github.com/emet-labs/sentinel-probe-go/int128"
+	"github.com/emet-labs/sentinel-probe-go/internal/specmatch"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -102,7 +102,7 @@ func fixtureRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..", "..", "testdata", "probe-sdk-conformance"))
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "testdata", "probe-sdk-conformance"))
 }
 
 func decodeStrict(t *testing.T, path string, out any) {

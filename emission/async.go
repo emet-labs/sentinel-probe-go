@@ -13,7 +13,7 @@ import (
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 )
 
 // Export error codes reported through Options.OnError (ExportError.Code).

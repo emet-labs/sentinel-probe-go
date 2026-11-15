@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/emet-labs/sentinel/sdk/go/filter"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/filter"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 func attr(key, value string) *modelv1.AttributeEntry {

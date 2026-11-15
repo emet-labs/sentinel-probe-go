@@ -1,0 +1,79 @@
+{
+  "format_version": "1.1.0",
+  "kind": "otlp_signal",
+  "cases": [
+    {
+      "id": "charge-ship",
+      "signal": "trace",
+      "path": "../otlp/charge-ship.bin",
+      "events": [
+        {
+          "id": "01f0c0ffee-charge",
+          "kind": "sagashop.payment.charge.completed",
+          "sequence_epoch": "7",
+          "sequence_number": "1",
+          "predecessors": []
+        },
+        {
+          "id": "01f0c0ffee-ship",
+          "kind": "sagashop.order.ship.requested",
+          "sequence_epoch": "7",
+          "sequence_number": "2",
+          "predecessors": ["01f0c0ffee-charge"]
+        }
+      ]
+    },
+    {
+      "id": "completeness-order",
+      "signal": "completeness",
+      "path": "../otlp/completeness-order.bin",
+      "completeness": {
+        "source_handle": "sagashop-order",
+        "sequence_epoch": "7",
+        "last_emitted": "2",
+        "complete_through": "2",
+        "acknowledged_filter_epoch": "4",
+        "clock_domain_id": "unix",
+        "occurrence_ns": "1700000000000000000",
+        "uncertainty_nanoseconds": "0",
+        "activity": "active"
+      }
+    },
+    {
+      "id": "verdict",
+      "signal": "verdict",
+      "path": "../otlp/verdict.bin",
+      "verdict": {
+        "id": "demo.spec.export.alpha:1.0.0:conv-9f3a-user@acme.example",
+        "outcome": "violate"
+      }
+    },
+    {
+      "id": "event-filter",
+      "signal": "event_filter",
+      "path": "../otlp/event-filter.bin",
+      "event_filter": {
+        "epoch": "9",
+        "specification_ids": ["spec"]
+      }
+    },
+    {
+      "id": "decide-response",
+      "signal": "decide_response",
+      "path": "../otlp/decide-response.bin",
+      "decide_response": {
+        "request_id": "req-charge-1",
+        "action": "deny",
+        "specifications": [
+          {"id": "sagashop.p4.ship-requires-prior-charge", "action": "permit"}
+        ]
+      }
+    },
+    {
+      "id": "reject-unknown-sentinel",
+      "signal": "trace",
+      "path": "../otlp/reject-unknown-sentinel.bin",
+      "reject": true
+    }
+  ]
+}

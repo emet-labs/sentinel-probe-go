@@ -1,232 +1,314 @@
-# Go Probe SDK
+# Go Probe SDK for Sentinel
 
-The Go Probe SDK (issue #33), ported from the TypeScript reference SDK in `sdk/typescript/`
-(issue #28). It implements against the locked proto contract (#27, closed). The SDK:
+[![CI](https://github.com/emet-labs/sentinel-probe-go/actions/workflows/ci.yml/badge.svg)](https://github.com/emet-labs/sentinel-probe-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/emet-labs/sentinel-probe-go)](https://pkg.go.dev/github.com/emet-labs/sentinel-probe-go)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL--2.0-informational.svg)](LICENSE)
 
-- holds the versioned Event Filter for its source (`client/`)
-- exports ended spans as OTLP/HTTP protobuf to `/v1/traces` (`emission/`, `otlp/`)
-- applies attribute-level Filter projection before shipping — relevance, never sampling
-  (`filter/`, ADR-0006)
-- enforces `ASK_AND_BLOCK` specs from a `DecideResponse` delivered on `POST /v1/logs`
-  (`enforcement/`, the ADR-0023 bounded fragment). The live path does not dial Decide
-- reads source-tier from deployment config (`config/`, ADR-0022, never hard-coded)
+The Go Probe SDK for [Sentinel](https://github.com/emet-labs) — instrument a Go application
+as a Sentinel **Probe**: the in-process component that reports what your application really
+did, as Events, and receives Sentinel's Verdicts and Event Filters in return.
 
-ADR-0002 left export to the host. #398 excepts the Probe wire: this SDK posts traces
-and completeness logs, and receives Verdict, Event Filter, and DecideResponse logs.
-`SentinelDecisionService` is not the wire. The same-machine test runs from
-`just harness-probe-sdk-go` against the devbox-built `sentinel-periphery`.
+Sentinel verifies cross-system action sequences against Specifications you declare, using
+recorded evidence rather than logs and dashboards. A Probe is how your code joins that
+contract. Missing evidence is never a pass: until Sentinel can show it has seen everything
+a source emitted, a Verdict that depends on that source stays Inconclusive.
 
-## Generated code is not committed
+## Requirements
 
-`sdk/go/gen/` is **gitignored** and produced at build time by `tools/generate-go-sdk.sh`
-(driven by `sdk/go/buf.gen.go.yaml`), mirroring how `sdk/typescript` produces
-`.generated/typescript/`. Consequences:
+- Go 1.25 or later.
+- A [Sentinel](https://github.com/emet-labs) deployment on the same host as the Probe.
+  The receiver uses the IPv4 loopback address `127.0.0.1`. Start it before Sentinel,
+  following the order below.
 
-- **This module is not `go get`-consumable from a bare clone.** Run `just build` (or
-  `tools/generate-go-sdk.sh`) first, or `gopls` and `go build` will fail on missing packages.
-- `rm -rf sdk/go/gen` forces a full regeneration; so does editing any `.proto` or the
-  codegen template, which `sdk/go/gen/.proto-digest` detects.
+## Installation
 
-The repository's precedent for committed generated output (`gen/rust/`) is
-committed-**and**-drift-gated: `tools/check-generated-probes.sh` regenerates the whole tree
-twice and compares both against each other and against the committed copy. Committing Go
-without an equivalent gate would give the worst of both worlds, and building that gate is a
-materially larger change than this SDK.
-
-## Package layout
-
-Mirrors `sdk/typescript/src/` one-for-one where Go idioms allow.
-
-| Go package | TypeScript source |
-| --- | --- |
-| `client/` | `src/client/` (`filter-store.ts`, `probe-client.ts`, `transport.ts`) |
-| `filter/` | `src/filter/apply-filter.ts` |
-| `internal/specmatch/` | the non-exported half of `apply-filter.ts` (`specSelects`) |
-| `emission/` | `src/emission/` (`span-to-event.ts`, `otel-bridge.ts`) |
-| `enforcement/` | `src/enforcement/` (`enforcement-gate.ts`, `monotonic-budget.ts`) |
-| `config/` | `src/config/` (`source-tier.ts` + `schema.ts`, collapsed) |
-| `int128/` | `src/util/int128.ts` |
-| `ids/` | `src/util/id.ts` |
-| `propagate/` | (Go-first) parent Event id header and tracestate carrier |
-
-There is deliberately **no root `.go` file**: the module directory is literally named `go`,
-and Go has no re-export idiom that would make a barrel package worth the ceremony. This
-README and the per-package `doc.go` files carry what `src/index.ts`'s docblock carried.
-
-Import aliases used throughout:
-
-```go
-modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-"github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1/probev1connect"
+```sh
+go get github.com/emet-labs/sentinel-probe-go
 ```
 
-`filter.proto` is in proto package `sentinel.model.v1`, so `EventFilter`,
-`SpecificationFilter`, `FailMode` and `DeliveryMode` all live under `modelv1`.
+The generated protobuf types are committed, so the module is consumable from a bare
+clone with no code generator.
+
+## Quickstart
+
+The Probe wire is OTLP/HTTP protobuf, in both directions:
+
+- each ended OTel span is exported as one Event to Sentinel's `POST /v1/traces`, with the
+  `x-sentinel-source-handle` header naming your source;
+- completeness signals go to `POST /v1/logs` on the same base URL, with the same
+  `x-sentinel-source-handle` header;
+- Sentinel posts Verdicts and published Event Filters as OTLP logs to the Probe's loopback
+  log receiver.
+
+Start the Probe and its log receiver first. Then start Sentinel with
+`SENTINEL_PROBE_LOG_URL` set to the receiver's full `http://127.0.0.1:<port>/v1/logs`
+URL, and publish the Specification only after the receiver is listening. Sentinel reads
+this URL once at startup and does not retry a failed Filter push. If the receiver's port
+changes when the Probe restarts, restart Sentinel with the new URL and publish again.
+One Sentinel process has one Probe log URL, so only one Probe process receives these
+Verdicts and Event Filters today.
+
+Both ingest routes require a source handle admitted by your Sentinel deployment; replace
+`checkout-service` below with that handle. A missing header returns HTTP 401; an unknown
+handle returns HTTP 403, and neither stores evidence. A completeness record's
+`sentinel.source_handle` must match the header; the SDK exporter sets both.
+
+Sentinel accepts `Content-Type: application/x-protobuf`, with identity or gzip encoding.
+OTLP/JSON, OTLP/gRPC and other encodings are unsupported (HTTP 415 on the HTTP route).
+An invalid span can refuse the whole request during decoding, including an unknown
+`sentinel.*` attribute. Admission conflicts may instead return HTTP 200 with nonzero
+`partial_success.rejected_spans`; this is still a failed export for completeness.
+The OTel span name becomes the Event kind.
+
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/google/uuid"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/emet-labs/sentinel-probe-go/client"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
+)
+
+const (
+	sentinelURL  = "http://127.0.0.1:8080"
+	sourceHandle = "checkout-service"
+)
+
+func main() {
+	ctx := context.Background()
+
+	// The loopback log receiver: point Sentinel's SENTINEL_PROBE_LOG_URL at
+	// receiver.LogsURL(). Verdicts and Event Filters arrive here.
+	receiver, err := otlp.Listen("127.0.0.1:4319")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer receiver.Close()
+
+	// Holds the versioned Event Filter; the gate reads decisions from the receiver.
+	probe := client.New(client.Config{SourceHandle: sourceHandle, SentinelBaseURL: sentinelURL})
+	probe.SetDecisions(receiver)
+
+	// One sequence allocator per source (see "Sequence numbers and completeness").
+	sequence, err := emission.NewSequenceAllocator(emission.SequenceOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Exports each ended OTel span as one Event to POST /v1/traces, and stamps
+	// sentinel.sequence.epoch and sentinel.sequence.number when each span starts.
+	tracer := emission.NewProbeTracer(emission.Options{
+		TracerName:   sourceHandle,
+		ServiceName:  sourceHandle,
+		Endpoint:     sentinelURL,
+		SourceHandle: sourceHandle,
+		Sequence:     sequence,
+	})
+
+	// Declares this source's completeness on POST /v1/logs.
+	heartbeat, err := otlp.NewCompletenessHeartbeat(otlp.HeartbeatConfig{
+		Source: sequence,
+		FilterEpoch: probe.AcknowledgedEpoch,
+		Endpoint: sentinelURL,
+		SourceHandle: sourceHandle,
+		OnError: func(err error) { log.Print(err) },
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() { _ = heartbeat.Run(ctx) }()
+
+	// Repeat whenever a new Filter arrives, before emitting or reporting completeness.
+	if filters := receiver.Filters(); len(filters) > 0 {
+		probe.SetFilter(filters[len(filters)-1])
+	}
+	var filterEpoch int64 // 0 until the first Event Filter arrives
+	if epoch := probe.AcknowledgedEpoch(); epoch != nil {
+		filterEpoch = int64(*epoch)
+	}
+	_, span := tracer.Tracer.Start(ctx, "checkout.charge.completed", trace.WithAttributes(
+		attribute.String(emission.AttributeEventID, uuid.NewString()), // your unique Event id
+		attribute.String(emission.AttributeSchemaVersion, "1.0.0"),
+		attribute.Int64(emission.AttributeAcknowledgedFilterEpoch, filterEpoch),
+		attribute.String(emission.AttributeClaimedSensitivity, "SENSITIVITY_INTERNAL"),
+		attribute.String("order.id", "order-1001"),
+	))
+	// ... the work the Specification watches ...
+	span.End()
+
+	// On a clean exit: flush the exports, then send the final completeness report.
+	_ = tracer.Provider.Shutdown(ctx)
+	heartbeat.Shutdown(ctx)
+}
+```
+
+Every exported OTel span carries `sentinel.event.id`, `sentinel.schema.version`,
+`sentinel.acknowledged_filter_epoch` (an `int64`, 0 until the first Event Filter arrives),
+`sentinel.claimed_sensitivity` (a `Sensitivity` name other than `SENSITIVITY_UNSPECIFIED`)
+and the two sequence attributes. A causal predecessor goes in `sentinel.parent.event.id`,
+or in a link's own `sentinel.event.id`. An OTel span that breaks this contract is refused
+before anything is sent, with an `*otlp.Refusal` reported through OpenTelemetry's error
+handler; a span id never stands in for a missing Event id.
+
+Event Filters collect on the receiver (`receiver.Filters()`, oldest first) and are not
+applied for you. Hand the newest to `probe.SetFilter`, which is a no-op when the epoch is
+unchanged or older. The tracer's exporter does not apply the Event Filter: it exports every ended
+OTel span in full. `filter.ApplyFilter` projects a `ProducerEvent` against the held
+Filter.
+
+Start Probe spans as roots, or stamp the parent's Event id in
+`sentinel.parent.event.id`: an ambient OTel parent without that Event id is refused.
+
+### Enforcement gate
+
+The gate is in the SDK, but Sentinel does not answer decision requests yet (see Status).
+
+```go
+import (
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	"github.com/emet-labs/sentinel-probe-go/ids"
+)
+
+// event is the ProducerEvent for the action, for example emission.SpanToEvent on the
+// ended span a span processor receives. Ask before the action becomes irreversible.
+outcome := enforcement.Gate(ctx, event, probe.CurrentFilter(), nil,
+	enforcement.Deps{
+		Decide:              probe.DecideFunc(),
+		NowMonotonicNs:      monotonicNanos,   // your monotonic clock, in nanoseconds
+		AcceptedFailModeFor: acceptedFailMode, // the fail mode your deployment contracted
+	},
+	enforcement.Options{
+		SourceHandle:   probe.SourceHandle(),
+		RequestID:      ids.GenerateRequestID(),
+		IdempotencyKey: ids.GenerateIdempotencyKey(),
+	},
+)
+if outcome.Kind.Permitted() {
+	commitTheAction() // permit, fail-open-permit or no-filter
+} else {
+	rollback() // deny, defer or fail-closed-deny
+}
+```
+
+## What the Probe does
+
+| Package | Duty |
+|---|---|
+| `otlp` | The Probe wire. `NewTraceExporter` posts ended OTel spans to `POST /v1/traces` and refuses a span that breaks the Event contract; `Listen` serves the loopback log receiver for Verdicts, Event Filters and DecideResponses; `ExportCompleteness` and `NewCompletenessHeartbeat` send completeness signals on `POST /v1/logs` |
+| `emission` | OTel spans become Events (`NewProbeTracer`, `SpanToEvent`). `NewSequenceAllocator` numbers the Events |
+| `client` | Holds the versioned Event Filter for your source and reads decisions from the log receiver (`ProbeClient`, `FilterStore`) |
+| `filter` | Relevance projection — drops attributes no Specification needs. Never samples (`ApplyFilter`) |
+| `enforcement` | The blocking decision — permit / deny / defer, with per-Specification fail modes and a monotonic latency budget (`Gate`). Not answered yet: see Status |
+| `config` | Source Tier resolution from deployment config, never hard-coded (`LoadSourceTierConfig`, `TierForHandle`) |
+| `ids`, `int128` | Per-call identifiers; the proto `Int128` helpers |
 
 ## Sequence numbers and completeness
 
-`emission.SequenceAllocator` and `otlp.CompletenessHeartbeat` (#461) give a source its
-`(Sequence Epoch, sequence number)` slots and its producer completeness signal, so a host
-does not hand-roll either.
+To show it has seen everything a source emitted, Sentinel needs two things from the
+source:
 
-```go
-allocator, err := emission.NewSequenceAllocator(emission.SequenceOptions{})
-tracer := emission.NewProbeTracer(emission.Options{
-	TracerName: "sagashop-order", Endpoint: base, SourceHandle: "sagashop-order",
-	Sequence: allocator,
-})
-heartbeat, err := otlp.NewCompletenessHeartbeat(otlp.HeartbeatConfig{
-	Source: allocator, FilterEpoch: filterStore.Epoch,
-	Endpoint: base, SourceHandle: "sagashop-order",
-})
-go heartbeat.Run(ctx) // every 15 s by default
-```
+- **Sequence numbers.** Every exported Event carries `sentinel.sequence.epoch`, its
+  Sequence Epoch, and `sentinel.sequence.number`: 1, 2, 3, … within that epoch.
+- **Completeness signals.** A `ProducerCompletenessSignal` on `POST /v1/logs` declares, for
+  the current epoch, `last_emitted` (the highest number allocated) and `complete_through`
+  (the highest number up to which every Event was exported successfully), with the Filter
+  epoch the Probe acknowledges. The source's Watermark advances from these signals.
 
-- **Slots.** With `Options.Sequence`, each span gets `sentinel.sequence.epoch` and
-  `sentinel.sequence.number` when it starts, unless it already carries both (a slot the
-  host reserved with `Allocate`). The slot is marked from Sentinel's answer: exported only
-  on HTTP 2xx with zero `partial_success.rejected_spans`
-  (`TraceExporter.ExportSpansChecked`, `otlp.RejectedSpans`); failed on any other answer,
-  an undecodable body or a client-side refusal. Pass the sequence attributes at start or
-  not at all.
-- **What the signal says.** `last_emitted` is the highest number allocated.
-  `complete_through` is the highest number below which every slot was exported, so it
-  never runs ahead of a successful export. A failed slot holds `complete_through`; the
-  default exporter retries it (see "Export is asynchronous and bounded" below), or the host
-  re-exports the same Event and calls `MarkExported`.
-  A slot the Event Filter dropped (`MarkFiltered`) also holds it until #542.
-- **One Sequence Epoch per quiet period.** A report that finds nothing in flight declares
-  a close (`complete_through == last_emitted`), and Sentinel refuses a closed epoch that
-  advances. So the allocator seals the epoch, and the next `Allocate` opens
-  `max(epoch + 1, clock Unix ms)`. Sentinel evaluates each source's latest epoch, so a
-  Binding whose Events straddle a roll of one source is Inconclusive, never a pass.
-  Only the epoch current when a Filter is published can settle Authoritative. A source
-  that is quiet at publication and wants Authoritative Verdicts should `Allocate` first and
-  start the Event's span later with that slot.
-- **Restarts.** The first epoch is the clock's Unix milliseconds. Persist the last epoch and
-  pass it as `PreviousEpoch` to guarantee a strictly greater epoch when the clock steps
-  back; without it Sentinel refuses the regressed epoch (`RegressedEpoch`, HTTP 409).
-- **Heartbeats are restatements.** Between quiet reports only `producer_reported_at`
-  changes, so Sentinel writes no Verdict revision. `producer_reported_at` never goes
-  backwards and never precedes `activity_since`. `DeclareIdle` and `DeclareActive` set the
-  activity; the next allocation ends an idle. A regressed acknowledged Filter epoch is
-  never sent: `OnError` receives `HeartbeatFilterEpochRegressed`.
-- **Stopping.** Cancelling `Run`'s context ends the schedule. `Shutdown` sends one final
-  report, which is a close only if nothing is unresolved, then stops. `Stop` makes the
-  source go silent and sends nothing more.
+The SDK provides both:
 
-## Callers that are not Probes
+- `emission.NewSequenceAllocator(emission.SequenceOptions)` returns a `*SequenceAllocator`.
+  Create one per source and set it as `emission.Options.Sequence`. The tracer then
+  allocates a slot when each OTel span starts and stamps both sequence attributes. An
+  OTel span that already carries both keeps them, so you can reserve a slot with
+  `Allocate()` ahead of its Event and stamp it on the span yourself.
+- After each export the tracer marks the slot. An export succeeded only when Sentinel
+  answered HTTP 2xx with no rejected spans (`partial_success.rejected_spans` absent or 0;
+  `(*otlp.TraceExporter).ExportSpansChecked` returns that count); anything else marks the
+  slot failed. If you allocate a slot and then drop its Event for the Event Filter, mark
+  it with `MarkFiltered(slot, filterEpoch)`.
+- `otlp.NewCompletenessHeartbeat(otlp.HeartbeatConfig)` returns a
+  `*CompletenessHeartbeat`. `Run(ctx)` reports the allocator's declaration every 15
+  seconds by default until `ctx` is cancelled; `Report(ctx)` sends one on demand. It
+  acknowledges the held Filter epoch (0 before the first Event Filter), sends one signal
+  at a time, and restates the previous signal when nothing has changed. `Now`, `Ticks`
+  and `Send` in the config replace its clock, its ticker and its transport.
 
-A span whose parent is remote and carries no `sentinel.parent.event.id` (a browser, a curl, an
-uninstrumented or Rust service called it) is refused by default: the export names no causal edge and
-a span id never stands in for an Event id. A service that has such callers sets
-`emission.Options.Export.AllowUnattributedRemoteParent` (or `otlp.TraceConfig.Export`): the Event is then
-exported with no edge to that caller, so a Binding that needs the edge stays Inconclusive instead of the
-whole source's `complete_through` stopping at the refused slot. A local parent without the id is still
-refused.
+**`complete_through` never runs ahead of the evidence.** It advances only across a
+contiguous run of successful exports. A failed export, an OTel span that never ends, and
+today an Event dropped for the Event Filter each hold it below that slot: the epoch stays
+open and the Verdicts that depend on this source stay Inconclusive instead of passing.
+The allocator does not retry. Re-export the identical Event and call
+`MarkExported(slot)`.
 
-## Export is asynchronous and bounded
+**The epoch rolls after a declared close.** A signal whose `complete_through` equals
+`last_emitted` is a declared close, and Sentinel accepts nothing more in that epoch. The
+allocator seals it, and the next allocation opens a new epoch: the greater of the previous
+epoch plus one and the clock's Unix milliseconds. Expect a new Sequence Epoch after every
+quiet period. If Sentinel has not yet accepted the previous epoch's final declaration
+under the Filter epoch the Probe now acknowledges, the heartbeat restates it before the
+first signal of the new epoch.
 
-With `Options.Endpoint` set, `NewProbeTracer` exports from a bounded queue on its own goroutine
-(`emission.AsyncProcessor`), so an unreachable or slow Sentinel never adds latency to `span.End()`.
-The span-end path never panics, never returns an error into the host, and never blocks: any
-validation, encode or transport failure marks the slot FAILED (`complete_through` never passes
-it), is passed to `Options.OnError` as an `*emission.ExportError` (with `Code`, span name, slot and
-cause) and is logged at most once per `ErrorLogInterval` (default 10 s). Tune it with
-`Options.Async` (`emission.AsyncOptions`):
+**A restarted process needs a strictly greater epoch.** By default the first epoch is the
+clock's Unix milliseconds. If your clock can step backwards across a restart, persist the
+last epoch and pass it to the next run's `emission.SequenceOptions`: the allocator then
+starts at the greater of the clock and that epoch plus one, and refuses an explicit epoch
+that is not greater. Without it, a clock that stepped backwards yields an epoch that
+Sentinel refuses with HTTP 409.
 
-- **Overflow.** The queue holds `QueueSize` spans (2048). A span that ends while it is full is dropped,
-  not waited for, and its slot is FAILED (`queue-full`).
-- **Retry.** A batch is retried up to `MaxAttempts` (5) times with exponential backoff and jitter on
-  transport errors and HTTP 408/425/429/500/502/503/504 only (a `Retry-After` on a 429 or 503 is honored, capped at
-  `MaxBackoff`; the policy is in [`../README.md`](../README.md)). A contract failure, a 400/403 and a Sentinel
-  rejection get the same answer again and are not retried. After the last attempt the slots are FAILED
-  and the spans stay in a buffer of `RetainFailed` (1024) that is retried every `RetryFailedInterval`
-  (30 s) and once at shutdown, so `complete_through` catches up when Sentinel returns.
-- **A bad span among good ones** is isolated by sending the batch's spans one by one.
-- **Duplicate Event id.** Sentinel refuses a redelivery of an Event id it already holds under other
-  content (`evidence_conflict`, `identity_conflict`). The refusal is deterministic, so it is not
-  retried, and the slot stays FAILED: that slot number never reached Sentinel as an Event, so
-  `complete_through` does not pass it (missing evidence never looks complete). The refusal is reported
-  as `duplicate-event-id`; the Event under that id stays what Sentinel accepted first. Any other
-  deterministic rejection (`slot_conflict`, a closed boundary) also leaves the slot FAILED.
-- **Shutdown.** `ProbeTracer.Shutdown(ctx)` (or `Provider.Shutdown`) flushes the queue, retries retained
-  spans once and stops. Call it before the heartbeat's own `Shutdown` so the final report declares what
-  was exported. `Provider.ForceFlush` flushes the queue without stopping.
-- `AsyncOptions.Synchronous` exports on the ending goroutine (tests, one-shot tools).
-- Export errors carry Sentinel's response body: `*otlp.HTTPStatusError` has `StatusCode` and `Body`
-  and unwraps to the older `*otlp.Refusal`; `otlp.Retryable(err)` says what the exporter retries.
+**Idle sources.** `DeclareIdle()` reports the source as intentionally idle. The next
+allocation, or `DeclareActive()`, makes it active again.
 
-## Stamping the reserved attributes
+**`Stop()` and `Shutdown`.** `Stop()` cancels the schedule and silences reports without
+sending a final signal. Cancelling `Run`'s context only ends the schedule; you may still
+call `Report(ctx)` or `Shutdown(ctx)` with a live context afterwards. `Shutdown(ctx)`
+waits for a running report and sends a final declaration, which closes only if every slot
+was exported. On a clean exit, shut the tracer's provider down first, then call
+`Shutdown` before `Stop`.
 
-The host owns `sentinel.event.id`, `sentinel.parent.event.id`, `sentinel.schema.version`,
-`sentinel.acknowledged_filter_epoch` and `sentinel.claimed_sensitivity`. Setting them per span still
-works. `Options.HostStamp` (`emission.HostStamperOptions`, or `emission.NewHostStamper` as a processor)
-stamps all five at span start so a service does not: an Event id `<handle>:<uuid>`, the parent span's
-Event id (or the remote caller's, below), the schema version, the acknowledged Filter epoch
-(`FilterStore.Epoch`) and the claimed sensitivity. An attribute the host already set is never overwritten.
+## Status
 
-## Carrying the parent Event id across services
+- **Detect-only.** Sentinel ingests Events, evaluates Specifications and reports Verdicts.
+  It blocks nothing.
+- **Decide is not served.** Sentinel answers no decision requests today. When an enforcing
+  Specification selects an Event, `ProbeClient`'s `DecideFunc` waits on the receiver for a
+  DecideResponse for at most the request's remaining Transport Budget. No answer arrives,
+  so when the budget runs out the gate resolves by its fail mode: `OutcomeFailClosedDeny`
+  when one of those Specifications is fail-closed and your deployment accepted that,
+  `OutcomeFailOpenPermit` otherwise.
+- **One wire.** OTLP/HTTP protobuf, as described above, is the only Probe wire.
+- **Unversioned.** There is no release yet, and no compatibility guarantee before one: the
+  API and the wire may still change. A `0.1.0` package manifest is not a release.
 
-`propagate.InjectParentEventID(carrier, eventID)` and `propagate.ExtractParentEventID(carrier)` write and read
-the `x-sentinel-parent-event-id` header, with the `sentinel` member of `tracestate` as the extract fallback.
-A `propagate.Carrier` is `Get`/`Set` (an `http.Header` fits; wrap Kafka headers in two methods).
-`otel.SetTextMapPropagator(propagate.Propagator{Inner: propagation.TraceContext{}})` does it for every
-instrumented client and server, and `HostStamper` then names the caller's Event as the parent. A caller
-that is not a Probe sends neither, and the callee exports its Event as a root.
+A Specification with no blocking budget or a zero budget resolves by fail mode at once.
 
-## Receiving Event Filters in a container
+## Contributing
 
-`otlp.ListenWith(otlp.ListenConfig{Host: "0.0.0.0", Port: 4318})` binds the log receiver on every
-interface (the default `Host` is loopback, and `otlp.Listen` still refuses anything else) so Sentinel can
-POST Event Filters to a Probe in another container. `receiver.LogsURLFor("shop-payment")` is the URL to
-register. The endpoint is unauthenticated: bind it only on a network that carries Sentinel.
+See [CONTRIBUTING.md](CONTRIBUTING.md). This repository is a published mirror; pull
+requests are reviewed and re-landed upstream.
 
-## Divergences from the TypeScript reference
+## License
 
-Deliberate, so a reviewer can check them off rather than flag them as omissions. Criterion 4
-of #33 is "structure and contract mirror the TypeScript reference SDK"; everything below is a
-place where Go forces a difference, or where this port is knowingly ahead of the reference.
+[MPL-2.0](LICENSE)
 
-| # | Divergence | Why |
-| --- | --- | --- |
-| D1 | No `src/index.ts` barrel equivalent | The module directory is `go`; `package go` is illegal, and Go has no clean re-export idiom for enum constants. Overview lives here and in per-package `doc.go`. |
-| D2 | Tests beside sources, not in a parallel `tests/` tree | Go convention; same-package `_test.go` can reach unexported helpers that the TS port had to `export`. |
-| D3 | No `generated.ts` re-export shim | Needed in TS only because of the `@sentinel-proto-gen` path alias. Go imports packages directly under the fixed `modelv1`/`probev1` alias convention. |
-| D4 | `schema.ts` + `source-tier.ts` collapsed into `config/sourcetier.go` | No `zod`; the schema is a struct plus a validation function. |
-| D5 | Enum constants keep the proto prefix | `protoc-gen-go` does not strip prefixes: `modelv1.FailMode_FAIL_MODE_CLOSED`, not `FailMode.CLOSED` as `bufbuild/es` emits. |
-| D6 | `FilterStore` uses `atomic.Pointer` | Go is genuinely concurrent, so the TS "reference-swap semantics" comment becomes an enforced invariant, verified under `go test -race`. |
-| D8 | `math/big.Int` for Int128 | Go has no native `int128`; `big.Int` is the `bigint` analog. |
-| D9 | `pgregory.net/rapid` instead of `fast-check` | `testing/quick` is frozen and cannot reflectively construct protobuf messages (unexported `protoimpl` fields). Shrinking and seed reproduction are the wins. Test-only dependency. |
-| D10 | Adds a Connect loopback test over `httptest` | Cheap in Go stdlib; strictly more coverage than the reference, which declined it. |
-| D14 | Integer/double attribute dispatch is type-directed, not value-directed | TS branches on `Number.isInteger(value)`, so JS `3` and `3.0` both become `integer_value`. Go dispatches on `attribute.INT64` vs `attribute.FLOAT64`, so `float64(3)` stays a `double_value`. Go's behaviour is the correct one. |
-| D15 | `GateOutcome.Reason` is populated on every outcome | TS carries `reason` only on the two fail-mode arms of a discriminated union; Go has no sum types, so one struct is forced. |
-| D16 | `emission.SpanConversion`, not `SpanContext` | `trace.SpanContext` appears in the same file (`ReadOnlySpan.Parent()`, `Link.SpanContext`); mirroring the TS name would collide. |
-| D17 | `Gate` short-circuits an already-dead `context.Context` into the aggregate fail mode without asking | The TS gate has no context to check. Go convention makes `ctx` the first parameter, and a real Connect client over `net/http` would fail identically; checking makes the outcome independent of whether a given `Decide` honours `ctx`. Never a permit, never a panic. `ctx` is still **not** a budget source — the proto budget is monotonic-relative and conflating the two is a clock-domain error. |
+## Development environment (this mirror): Devbox + just
 
-Ahead of the reference — **additions, not ports**, called out so they are not read as drift:
+This repository pins its own toolchain — `devbox.json` + `devbox.lock` — and every task
+runs inside it, the same convention as the Sentinel source repository:
 
-| # | Addition | Why the reference lacks it |
-| --- | --- | --- |
-| D11 | `GateOutcome.Specifications` carries per-spec `SpecificationDecision` including `UnresolvedReason` | `enforcement-gate.ts`'s `GateOutcome` has no `specifications` field; `SpecificationDecision` is a bare re-export and never populated. |
-| D12 | `enforcement/doc.go` states which ADR-0023 gates are promotion-time and re-checked nowhere at runtime | `grep -rn "promotion" sdk/typescript/src` returns nothing. |
-| D13 | `ApplyFilter` always allocates a fresh attribute slice | `apply-filter.ts:44` aliases `event.attributes` directly in the project-all branch, with no aliasing note. |
+    devbox install        # once; resolves devbox.lock
+    devbox shell          # then `just --list` for the recipes
 
-D7 (`bytes_value`/`map_value` unreachable through the OTel Go API) is **deleted**, not merely
-reworded: it was an artefact of pinning otel at v1.31.0. At the pinned v1.45.0 the
-`attribute.Type` set is `EMPTY, BOOL, INT64, FLOAT64, STRING, BOOLSLICE, INT64SLICE,
-FLOAT64SLICE, STRINGSLICE, BYTESLICE, SLICE, MAP`, so all seven `AttributeValue` oneof arms
-are reachable natively and no `ExtraAttributes` escape hatch is needed.
+`build`, `test`, `lint` and `fmt-check` reuse the canonical gate names of the source
+repository, scoped to this one language.
 
-## Toolchain
-
-Pinned `go@1.25.12` in `devbox.json` — the exact minimum satisfying the `go 1.25.0` directives
-of `go.opentelemetry.io/otel` v1.45.0 (where `attribute.MAP` landed) and
-`connectrpc.com/connect` v1.20.0. `go.mod` declares `go 1.25.0` with **no `toolchain`
-directive**: under `GOTOOLCHAIN=local` (set per-recipe in the `Justfile`) a `toolchain` line
-above the installed compiler is at best inert, and for a consumer without `GOTOOLCHAIN=local`
-it triggers exactly the silent toolchain download that pinning exists to prevent.
-
-Consistency with SagaShop's Go port is deliberately **not** a rationale for any pin here:
-separate modules, independent dependency graphs, no shared build.
+The toolchain is tested with Devbox 0.19.0. Devbox release installs are a launcher that
+runs `DEVBOX_USE_VERSION` when it is set, so `export DEVBOX_USE_VERSION=0.19.0` keeps you
+on the tested version.

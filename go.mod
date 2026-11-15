@@ -1,4 +1,4 @@
-module github.com/emet-labs/sentinel/sdk/go
+module github.com/emet-labs/sentinel-probe-go
 
 // No `toolchain` directive on purpose. The Justfile runs every Go recipe under
 // GOTOOLCHAIN=local so an audited compiler cannot be silently replaced by a dependency;

@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package sentinel.model.v1;
+
+import "sentinel/model/v1/common.proto";
+
+message AttributeArray {
+  repeated AttributeValue values = 1;
+}
+
+message AttributeMap {
+  repeated AttributeEntry entries = 1;
+}
+
+// One attribute in a map. The claimed_sensitivity is a per-attribute assertion by the
+// Probe (ADR-0026 §9); SENSITIVITY_UNSPECIFIED defers to ProducerEvent.claimed_sensitivity.
+message AttributeEntry {
+  string key = 1;
+  AttributeValue value = 2;
+  Sensitivity claimed_sensitivity = 3;
+}
+
+message AttributeValue {
+  oneof value {
+    string string_value = 1;
+    bool bool_value = 2;
+    sint64 integer_value = 3;
+    double double_value = 4;
+    bytes bytes_value = 5;
+    AttributeArray array_value = 6;
+    AttributeMap map_value = 7;
+  }
+}
+
+// Evidence asserted by a Probe. Source identity, tier, integrity, and observation time
+// are deliberately absent because the receiver owns those authority domains.
+message ProducerEvent {
+  string id = 1;
+  SequenceCoordinate sequence = 2;
+  string schema_version = 3;
+  optional uint64 acknowledged_filter_epoch = 4;
+  string kind = 5;
+  OccurrenceTime occurrence_time = 6;
+  repeated AttributeEntry attributes = 7;
+  repeated SourceCapability claimed_capabilities = 8;
+  Sensitivity claimed_sensitivity = 9;
+  repeated string causal_predecessor_ids = 10;
+}
+
+// Canonical Event formed only by Sentinel after authenticating and enriching producer input.
+// tenant_id and deployment_id are Sentinel-assigned scoping (ADR-0026 §1, §10): the
+// isolation boundary and the Specification/Verdict scope. They are not producer-asserted.
+// deployment_id identifies the Deployment instance; SourceAssurance.topology_id references
+// the Topology (declared shape) of that Deployment.
+message Event {
+  ProducerEvent producer_event = 1;
+  SourceAssurance assurance = 2;
+  ObservationTime observation_time = 3;
+  string tenant_id = 4;
+  string deployment_id = 5;
+  // Which data class this Event belongs to (ADR-0029). Set by the ingest boundary at
+  // observation time; corpus Events are never tenant-scoped and tenant Events are never
+  // corpus-class, and downstream storage must filter on this field rather than guess.
+  DataClass data_class = 6;
+}

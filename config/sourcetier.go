@@ -13,7 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
 )
 
 // Tier values accepted in configuration. These are the deployment-facing spellings, not the

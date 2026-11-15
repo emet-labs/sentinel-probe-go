@@ -7,8 +7,8 @@ import (
 
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	"github.com/emet-labs/sentinel/sdk/go/int128"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	"github.com/emet-labs/sentinel-probe-go/int128"
 )
 
 func TestOccurrenceTimeUsesUnixClockDomainAndZeroUncertainty(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/emet-labs/sentinel/sdk/go/propagate"
+	"github.com/emet-labs/sentinel-probe-go/propagate"
 )
 
 func TestInjectExtractRoundTripOnHTTPHeaders(t *testing.T) {

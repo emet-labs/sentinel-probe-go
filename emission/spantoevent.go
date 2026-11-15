@@ -4,8 +4,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	"github.com/emet-labs/sentinel/sdk/go/int128"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/int128"
 )
 
 // Reserved attribute keys. They carry causal-edge metadata and are never emitted as

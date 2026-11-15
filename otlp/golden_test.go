@@ -6,9 +6,9 @@ import (
 	"runtime"
 	"testing"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 	collogspb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
@@ -23,7 +23,7 @@ func otlpDir(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "..", "testdata", "otlp")
+	return filepath.Join(filepath.Dir(file), "..", "testdata", "otlp")
 }
 
 func readGolden(t *testing.T, name string) []byte {

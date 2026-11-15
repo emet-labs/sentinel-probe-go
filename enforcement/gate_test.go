@@ -8,9 +8,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
 )
 
 const (

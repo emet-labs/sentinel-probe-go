@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package sentinel.probe.v1;
+
+import "sentinel/model/v1/event.proto";
+import "sentinel/model/v1/filter.proto";
+
+message DecideRequest {
+  string request_id = 1;
+  string idempotency_key = 2;
+  string source_handle = 3;
+  optional uint64 filter_epoch = 4;
+  sentinel.model.v1.ProducerEvent producer_event = 5;
+  // Relative budget remaining at this hop. Each hop decrements it using a local
+  // monotonic clock; it is never an absolute deadline from another clock domain.
+  optional uint64 remaining_transport_budget_nanoseconds = 6;
+}
+
+enum DecisionAction {
+  DECISION_ACTION_UNSPECIFIED = 0;
+  DECISION_ACTION_PERMIT = 1;
+  DECISION_ACTION_DENY = 2;
+  DECISION_ACTION_DEFER = 3;
+}
+
+enum UnresolvedReason {
+  UNRESOLVED_REASON_UNSPECIFIED = 0;
+  UNRESOLVED_REASON_PREFIX_UNCERTAINTY = 1;
+  UNRESOLVED_REASON_OBSERVATIONAL_UNCERTAINTY = 2;
+  UNRESOLVED_REASON_EPISTEMIC_UNCERTAINTY = 3;
+  UNRESOLVED_REASON_EVIDENCE_GAP = 4;
+  UNRESOLVED_REASON_TIMEOUT = 5;
+}
+
+message SpecificationDecision {
+  string specification_id = 1;
+  string specification_version = 2;
+  DecisionAction action = 3;
+  sentinel.model.v1.FailMode fail_mode = 4;
+  optional UnresolvedReason unresolved_reason = 5;
+}
+
+message DecideResponse {
+  string request_id = 1;
+  DecisionAction action = 2;
+  repeated SpecificationDecision specifications = 3;
+}
+
+service SentinelDecisionService {
+  rpc Decide(DecideRequest) returns (DecideResponse);
+}

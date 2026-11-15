@@ -1,0 +1,495 @@
+{
+  "format_version": "1.3.0",
+  "kind": "sequence_completeness",
+  "cases": [
+    {
+      "id": "fresh-epoch-declares-zero",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "0", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "epoch-from-clock-ms",
+      "start": {"clock_unix_ms": "1794000123456", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000123456", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000123456", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000123456000000", "activity_since_ns": "1794000123456000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "explicit-epoch-override",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": "42", "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "42", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "42", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "in-flight-holds-complete-through",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "2"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "2", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "2", "complete_through": "2", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "out-of-order-exports",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "3"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "3"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "2"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "3", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "failed-export-stalls",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "3"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "export_fail", "epoch": "1794000000000", "number": "2"},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "3"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000015000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true}
+        ]},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "4"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "4", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "failed-then-reexported",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "3"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "export_fail", "epoch": "1794000000000", "number": "2"},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "3"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "2"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "3", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "filter-drop-does-not-advance",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "set_filter_epoch", "epoch": "4"},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "3"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "filter_drop", "epoch": "1794000000000", "number": "2", "filter_epoch": "4"},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "3"},
+        {"op": "tick", "send": ["accepted"], "filtered": [{"first": "2", "last": "2", "filter_epoch": "4"}], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "3", "complete_through": "1", "acknowledged_filter_epoch": "4", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "adjacent-filter-drops-merge",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "set_filter_epoch", "epoch": "4"},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "3"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "4"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "5"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "6"}},
+        {"op": "filter_drop", "epoch": "1794000000000", "number": "4", "filter_epoch": "4"},
+        {"op": "filter_drop", "epoch": "1794000000000", "number": "2", "filter_epoch": "4"},
+        {"op": "filter_drop", "epoch": "1794000000000", "number": "3", "filter_epoch": "4"},
+        {"op": "set_filter_epoch", "epoch": "5"},
+        {"op": "filter_drop", "epoch": "1794000000000", "number": "5", "filter_epoch": "5"},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "6"},
+        {"op": "tick", "send": ["accepted"], "filtered": [{"first": "2", "last": "4", "filter_epoch": "4"}, {"first": "5", "last": "5", "filter_epoch": "5"}], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "6", "complete_through": "1", "acknowledged_filter_epoch": "5", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "restatement-is-stable",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "2", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000015000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "2", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true}
+        ]}
+      ]
+    },
+    {
+      "id": "restatement-survives-clock-step-back",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "clock", "unix_ms": "1794000010000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000010000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1793999970000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000010000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true}
+        ]},
+        {"op": "idle"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "idle", "reported_at_ns": "1794000010000000000", "activity_since_ns": "1794000010000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "close-seals-next-allocation-rolls",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "roll-takes-clock-when-ahead",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000060000"},
+        {"op": "allocate", "expect": {"epoch": "1794000060000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000060000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000060000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "open-tick-does-not-roll",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "2", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "previous-final-resent-before-new-epoch",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["not_accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["accepted", "accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true},
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "filter-ack-reaches-closed-epoch",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "set_filter_epoch", "epoch": "1"},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["accepted", "accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "1", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false},
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "1", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "no-final-once-new-epoch-accepted",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["not_accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["not_accepted", "accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true},
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000015000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true}
+        ]}
+      ]
+    },
+    {
+      "id": "refused-final-does-not-block",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["not_accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["not_accepted", "not_accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true},
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000015000"},
+        {"op": "tick", "send": ["accepted", "accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false},
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true}
+        ]}
+      ]
+    },
+    {
+      "id": "filter-epoch-absent-is-zero",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "set_filter_epoch", "epoch": null},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "filter-epoch-advance-is-material",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "set_filter_epoch", "epoch": "2"},
+        {"op": "clock", "unix_ms": "1794000015000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "2", "activity": "active", "reported_at_ns": "1794000015000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "filter-epoch-regression-suppressed",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "set_filter_epoch", "epoch": "3"},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "3", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "set_filter_epoch", "epoch": "2"},
+        {"op": "clock", "unix_ms": "1794000015000"},
+        {"op": "tick", "send": [], "filtered": [], "expect_error": "filter-epoch-regressed", "expect": []},
+        {"op": "set_filter_epoch", "epoch": "3"},
+        {"op": "clock", "unix_ms": "1794000030000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "3", "activity": "active", "reported_at_ns": "1794000030000000000", "activity_since_ns": "1794000000000000000", "restates_previous": true}
+        ]}
+      ]
+    },
+    {
+      "id": "idle-then-restates",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000001000"},
+        {"op": "idle"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "idle", "reported_at_ns": "1794000001000000000", "activity_since_ns": "1794000001000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000016000"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "idle", "reported_at_ns": "1794000016000000000", "activity_since_ns": "1794000001000000000", "restates_previous": true}
+        ]}
+      ]
+    },
+    {
+      "id": "allocation-ends-idle",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000001000"},
+        {"op": "idle"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "idle", "reported_at_ns": "1794000001000000000", "activity_since_ns": "1794000001000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000006000"},
+        {"op": "allocate", "expect": {"epoch": "1794000006000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000006000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000006000000000", "activity_since_ns": "1794000006000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "declare-active",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000002000"},
+        {"op": "idle"},
+        {"op": "clock", "unix_ms": "1794000003000"},
+        {"op": "idle"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "idle", "reported_at_ns": "1794000003000000000", "activity_since_ns": "1794000002000000000", "restates_previous": false}
+        ]},
+        {"op": "clock", "unix_ms": "1794000005000"},
+        {"op": "active"},
+        {"op": "active"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000005000000000", "activity_since_ns": "1794000005000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "restart-clock-ahead",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "restart", "clock_unix_ms": "1794000120000", "epoch": null, "previous_epoch": "inherit"},
+        {"op": "allocate", "expect": {"epoch": "1794000120000", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000120000", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000120000000000", "activity_since_ns": "1794000120000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "restart-clock-behind-takes-previous-plus-one",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "restart", "clock_unix_ms": "1793999940000", "epoch": null, "previous_epoch": "inherit"},
+        {"op": "allocate", "expect": {"epoch": "1794000000001", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000001", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1793999940000000000", "activity_since_ns": "1793999940000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "restart-override-not-greater-refused",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": "100", "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "100", "number": "1"}},
+        {"op": "restart", "clock_unix_ms": "1794000000000", "epoch": "100", "previous_epoch": "inherit", "expect_error": "epoch-not-greater"},
+        {"op": "restart", "clock_unix_ms": "1794000000000", "epoch": "50", "previous_epoch": "100", "expect_error": "epoch-not-greater"},
+        {"op": "restart", "clock_unix_ms": "1794000000000", "epoch": "101", "previous_epoch": "inherit"},
+        {"op": "allocate", "expect": {"epoch": "101", "number": "1"}},
+        {"op": "tick", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "101", "last_emitted": "1", "complete_through": "0", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]}
+      ]
+    },
+    {
+      "id": "shutdown-closes-when-quiescent",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "shutdown", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "1", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "tick", "send": [], "filtered": [], "expect": []}
+      ]
+    },
+    {
+      "id": "shutdown-stays-open-with-in-flight",
+      "start": {"clock_unix_ms": "1794000000000", "epoch": null, "previous_epoch": null},
+      "steps": [
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "1"}},
+        {"op": "allocate", "expect": {"epoch": "1794000000000", "number": "2"}},
+        {"op": "export_ok", "epoch": "1794000000000", "number": "1"},
+        {"op": "shutdown", "send": ["accepted"], "filtered": [], "expect": [
+          {"sequence_epoch": "1794000000000", "last_emitted": "2", "complete_through": "1", "acknowledged_filter_epoch": "0", "activity": "active", "reported_at_ns": "1794000000000000000", "activity_since_ns": "1794000000000000000", "restates_previous": false}
+        ]},
+        {"op": "tick", "send": [], "filtered": [], "expect": []}
+      ]
+    },
+    {"id": "empty-body", "response_hex": "", "rejected_spans": "0"},
+    {"id": "rejected-two", "response_hex": "0a020802", "rejected_spans": "2"},
+    {"id": "duplicate-message-zero-rejected", "response_hex": "0a341232617070656e645f6576656e747320636c617373696669656420312064656c69766572696573206173206475706c6963617465", "rejected_spans": "0"},
+    {"id": "truncated", "response_hex": "0a0508", "undecodable": true}
+  ]
+}

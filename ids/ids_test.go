@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/emet-labs/sentinel/sdk/go/ids"
+	"github.com/emet-labs/sentinel-probe-go/ids"
 )
 
 func TestGeneratedIdentifiersAreDistinctUUIDs(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 )
 
 const epochE uint64 = 1_794_000_000_000

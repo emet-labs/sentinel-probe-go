@@ -9,10 +9,10 @@ import (
 
 	"connectrpc.com/connect"
 
-	"github.com/emet-labs/sentinel/sdk/go/client"
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	"github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1/probev1connect"
+	"github.com/emet-labs/sentinel-probe-go/client"
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1/probev1connect"
 )
 
 // A capability the TypeScript reference declined as out of scope, and about thirty lines of

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	int128codec "github.com/emet-labs/sentinel/sdk/go/int128"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	int128codec "github.com/emet-labs/sentinel-probe-go/int128"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
 )
 
 // mockDecider is the in-process Decide stub, mirroring

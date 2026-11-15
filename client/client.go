@@ -8,9 +8,9 @@ import (
 
 	"connectrpc.com/connect"
 
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
-	"github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1/probev1connect"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1/probev1connect"
 )
 
 // Decisions supplies a DecideResponse decoded from an OTLP log. The live path

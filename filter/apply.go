@@ -8,8 +8,8 @@
 package filter
 
 import (
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	"github.com/emet-labs/sentinel/sdk/go/internal/specmatch"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	"github.com/emet-labs/sentinel-probe-go/internal/specmatch"
 )
 
 // ApplyFilter projects event against filter. It returns a possibly attribute-trimmed

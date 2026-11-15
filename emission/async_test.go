@@ -16,8 +16,8 @@ import (
 	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	"github.com/emet-labs/sentinel/sdk/go/otlp"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	"github.com/emet-labs/sentinel-probe-go/otlp"
 )
 
 // sentinelStub is a Sentinel that answers each trace export with handler's reply and records what it saw.

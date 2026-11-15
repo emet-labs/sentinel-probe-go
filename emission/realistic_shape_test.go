@@ -10,11 +10,11 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/emet-labs/sentinel/sdk/go/emission"
-	"github.com/emet-labs/sentinel/sdk/go/enforcement"
-	"github.com/emet-labs/sentinel/sdk/go/filter"
-	modelv1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/model/v1"
-	probev1 "github.com/emet-labs/sentinel/sdk/go/gen/sentinel/probe/v1"
+	"github.com/emet-labs/sentinel-probe-go/emission"
+	"github.com/emet-labs/sentinel-probe-go/enforcement"
+	"github.com/emet-labs/sentinel-probe-go/filter"
+	modelv1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/model/v1"
+	probev1 "github.com/emet-labs/sentinel-probe-go/gen/sentinel/probe/v1"
 )
 
 // An end-to-end emit -> ApplyFilter -> Gate exercise over realistically shaped spans.

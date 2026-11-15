@@ -1,0 +1,272 @@
+syntax = "proto3";
+
+package sentinel.model.v1;
+
+import "sentinel/model/v1/common.proto";
+
+enum VerdictOutcome {
+  VERDICT_OUTCOME_UNSPECIFIED = 0;
+  VERDICT_OUTCOME_SATISFY = 1;
+  VERDICT_OUTCOME_VIOLATE = 2;
+  VERDICT_OUTCOME_INCONCLUSIVE = 3;
+}
+
+enum InconclusiveReason {
+  INCONCLUSIVE_REASON_UNSPECIFIED = 0;
+  INCONCLUSIVE_REASON_PREFIX_UNCERTAINTY = 1;
+  INCONCLUSIVE_REASON_OBSERVATIONAL_UNCERTAINTY = 2;
+  INCONCLUSIVE_REASON_EPISTEMIC_UNCERTAINTY = 3;
+  reserved 4;
+  reserved "INCONCLUSIVE_REASON_EVIDENCE_GAP";
+  // Complete, healthy, silent required anchor-tier source, but the Specification
+  // needs a presence that silence cannot confirm (ADR-0033).
+  INCONCLUSIVE_REASON_ANCHOR_SILENCE = 5;
+}
+
+enum VerdictAuthority {
+  VERDICT_AUTHORITY_UNSPECIFIED = 0;
+  VERDICT_AUTHORITY_PROVISIONAL = 1;
+  VERDICT_AUTHORITY_AUTHORITATIVE = 2;
+}
+
+enum TierSettlement {
+  TIER_SETTLEMENT_UNSPECIFIED = 0;
+  TIER_SETTLEMENT_NOT_REQUIRED = 1;
+  TIER_SETTLEMENT_PENDING = 2;
+  TIER_SETTLEMENT_SETTLED = 3;
+}
+
+message FilterEpochBySource {
+  SourceIdentity source = 1;
+  optional uint64 filter_epoch = 2;
+}
+
+message SourceGap {
+  SourceIdentity source = 1;
+  uint64 sequence_epoch = 2;
+  uint64 first_missing = 3;
+  uint64 last_missing = 4;
+  string effect = 5;
+}
+
+message SourceHealth {
+  SourceIdentity source = 1;
+  bool healthy = 2;
+  string detail = 3;
+}
+
+message SourceCapabilityRecord {
+  SourceIdentity source = 1;
+  repeated SourceCapability capabilities = 2;
+}
+
+message SourceTierRecord {
+  SourceIdentity source = 1;
+  SourceTier tier = 2;
+  // Events from this source that anchor this Verdict. Empty means this source anchored no Event here; it does not downgrade the tier.
+  repeated string anchored_event_ids = 3;
+}
+
+message UnresolvedCausalEdge {
+  string event_id = 1;
+  string missing_predecessor_id = 2;
+}
+
+message ExtractionFact {
+  string fact_id = 1;
+  bool available = 2;
+  string detail = 3;
+}
+
+message Uncertainty {
+  InconclusiveReason reason = 1;
+  string detail = 2;
+}
+
+// The explicit assurance downgrade when tier coverage is incomplete or no covered source anchors evidence.
+message SourceTierGap {
+  // Covered required sources classified as contributing-tier.
+  repeated SourceIdentity contributing_sources = 1;
+  string detail = 2;
+  // Required sources without valid anchor evidence, including sources with no tier record.
+  repeated SourceIdentity unanchored_sources = 3;
+}
+
+// An Event that participates in a closed, outcome-decisive violation witness.
+message DecisiveEvent {
+  string event_id = 1;
+  SourceIdentity source = 2;
+  optional uint64 sequence_epoch = 3;
+  optional uint64 sequence_number = 4;
+}
+
+// The exact open evidence a named proof rule establishes cannot change a violation.
+message OutcomeInvariantLimitations {
+  repeated SourceGap gaps = 1;
+  repeated SourceIdentity unhealthy_sources = 2;
+  repeated UnresolvedCausalEdge unresolved_causal_edges = 3;
+  repeated string unavailable_extraction_fact_ids = 4;
+  repeated InconclusiveReason uncertainty = 5;
+}
+
+// A named and versioned proof over a decisive witness and every open limitation.
+message DecisiveViolationBasis {
+  repeated DecisiveEvent witness_events = 1;
+  repeated string required_extraction_fact_ids = 2;
+  string invariance_proof_rule_id = 3;
+  string invariance_proof_rule_version = 4;
+  OutcomeInvariantLimitations outcome_invariant_limitations = 5;
+}
+
+// Presence asserts that the full required evidence set is closed at settlement.
+message CompleteEvidenceBasis {}
+
+// A Violate settled by watermark-complete silence of required anchor-tier
+// source(s), not by witness Events (ADR-0033). Mutually exclusive with
+// DecisiveViolationBasis.
+message WatermarkAnchoredViolationBasis {
+  // Anchor-tier source(s) whose silence, through the named Watermark, witnesses
+  // the absence.
+  repeated SourceIdentity silent_anchor_sources = 1;
+  // Completeness coordinate per source: the Watermark up to which each is
+  // complete, healthy, and emitted nothing for this Binding.
+  repeated Watermark silence_through_watermarks = 2;
+  string invariance_proof_rule_id = 3;
+  string invariance_proof_rule_version = 4;
+  OutcomeInvariantLimitations outcome_invariant_limitations = 5;
+}
+
+// The outcome-specific evidence basis that justifies an authoritative conclusion.
+message SettlementBasis {
+  oneof basis {
+    CompleteEvidenceBasis complete_evidence = 1;
+    DecisiveViolationBasis decisive_violation = 2;
+    WatermarkAnchoredViolationBasis watermark_anchored_violation = 3;
+  }
+}
+
+enum LateDataPolicy {
+  LATE_DATA_POLICY_UNSPECIFIED = 0;
+  LATE_DATA_POLICY_EXCLUDE = 1;
+  LATE_DATA_POLICY_ACCEPT_FOR_FUTURE_VERDICTS = 2;
+}
+
+// Whether this Verdict was computed while a Specification was warming behind
+// an activation barrier. Three-way, not a bool: NOT_DECLARED is distinct from
+// CLEARED so a consumer cannot read "cleared" as evidence that a rollout
+// completed when none was declared.
+//
+// A warming Shadow Violate is attributable as Violate ∧ Provisional ∧ PENDING.
+// Comparing acknowledged Filter epochs against target_filter_epoch is not that
+// predicate: a barrier can stay pending after every present acknowledged epoch
+// has reached the target (watermark lag, no complete boundary, …).
+enum ActivationBarrierStatus {
+  ACTIVATION_BARRIER_STATUS_UNSPECIFIED = 0;
+  ACTIVATION_BARRIER_STATUS_NOT_DECLARED = 1;
+  ACTIVATION_BARRIER_STATUS_PENDING = 2;
+  ACTIVATION_BARRIER_STATUS_CLEARED = 3;
+}
+
+// The evidence conditions inseparable from a Verdict (ADR-0017).
+message AssuranceEnvelope {
+  string specification_id = 1;
+  string specification_version = 2;
+  repeated string schema_versions = 3;
+  repeated FilterEpochBySource filter_epochs = 4;
+  repeated Watermark watermarks = 5;
+  repeated SourceIdentity required_sources = 6;
+  repeated SourceIdentity observed_sources = 7;
+  repeated SourceGap gaps = 8;
+  repeated SourceHealth source_health = 9;
+  repeated SourceCapabilityRecord capabilities = 10;
+  repeated SourceTierRecord source_tiers_and_anchors = 11;
+  repeated UnresolvedCausalEdge unresolved_causal_edges = 12;
+  repeated ExtractionFact extraction_facts = 13;
+  repeated Uncertainty uncertainty = 14;
+  LateDataPolicy late_data_policy = 15;
+  TierSettlement hot_path = 16;
+  TierSettlement cold_path = 17;
+  repeated Watermark hot_settlement_watermarks = 18;
+  repeated Watermark cold_settlement_watermarks = 19;
+  SourceTierGap source_tier_gap = 20;
+  SettlementBasis settlement_basis = 21;
+  // Discriminator. UNSPECIFIED is rejected at the model boundary.
+  ActivationBarrierStatus activation_barrier = 22;
+  // Specification-level target Filter epoch. Unset on NOT_DECLARED and on the
+  // historical #156 PENDING residual (NoEvidence / silent sources whose
+  // detail never interpolated a target). CLEARED requires this field.
+  // PENDING may leave it unset. Do not treat 0 as a missing-target sentinel:
+  // Filter epoch 0 is a real epoch.
+  optional uint64 target_filter_epoch = 23;
+
+  // Raw-Event retention horizon in effect at settlement (ADR-0026 §6), in days.
+  // Absence is rejected at the model boundary for new construction; Verdict::decode
+  // recovers historical pre-#206 blobs (codec backfill to the platform default of
+  // 30 — historical recovery, not an export default). Validated range is 7..=365.
+  // Sentinel Events are not the EU AI Act Art. 12 automatically generated log; the
+  // 30-day platform default sits below the six-month Art. 19 / 26(6) deployer floor
+  // on purpose and must not be silently raised to fake that floor.
+  optional uint32 raw_event_retention_days = 24;
+
+  // Evidence-extract retention at settlement (ADR-0026 §6 / §8; bounds #243). Entire
+  // oneof unset is a defect at the model boundary. Configured days must be in 1..=365
+  // (shape-analogous to raw-Event bounds; 1..=6 remain legal). The Tenant-config /
+  // store-enabled default is 90 days when the configured arm is chosen — not a Core
+  // construction default while the store is undeployed, and not a Verdict::decode
+  // backfill value. NotDeployed is the truthful claim when this deployment operates
+  // no evidence-extract store — never encode that as days == 0. Verdict::decode
+  // backfills NotDeployed on historical blobs lacking this oneof. There is no
+  // evidence_extract ≤ raw_event coupling on the same envelope.
+  oneof evidence_extract_retention {
+    uint32 evidence_extract_retention_days = 25;
+    EvidenceExtractRetentionNotDeployed evidence_extract_not_deployed = 27;
+  }
+
+  // Redaction policy in effect at settlement (ADR-0026 §7). Entire oneof unset is a
+  // defect at the model boundary. Configured version must be non-blank; None is the
+  // truthful claim when this deployment has no redaction policy — never encode that
+  // as an empty string. Verdict::decode backfills None on historical blobs lacking
+  // this oneof. The version/None claim is separate from the path inventory below.
+  oneof redaction_policy {
+    string redaction_policy_version = 26;
+    RedactionPolicyNone redaction_policy_none = 28;
+  }
+
+  // Forecast-at-settle inventory of attribute paths claimed / scheduled for
+  // post-settle redaction among attributes present on this Verdict's evidence
+  // (ADR-0026 §7; issue #244). Not "after the worker mutated Events": the sealed
+  // Verdict is immutable; a later redact worker mutates retained Events and writes
+  // §8 residue elsewhere — it does not rewrite this list.
+  //
+  // Empty (`[]`) means only that no redacted-attribute claims are recorded on this
+  // envelope. Proto3 cannot distinguish absence from empty. Do not infer that
+  // redaction completed, was a noop, or that a worker has or has not run.
+  // Value hashes / binding residue stay on the ADR-0026 §8 / evidence-extract
+  // surface — this message carries no hashes.
+  //
+  // Model validation rejects a non-empty list when redaction_policy is None.
+  // Duplicate (event_id, attribute_path) pairs and blank id/path are rejected.
+  // Canonical order is (event_id, attribute_path). Core must not invent entries.
+  repeated RedactedAttributeRef redacted_attributes = 29;
+}
+
+// Presence asserts that this deployment operates no evidence-extract store.
+message EvidenceExtractRetentionNotDeployed {}
+
+// Presence asserts that this deployment has no redaction policy configured.
+message RedactionPolicyNone {}
+
+// One claimed / scheduled redaction binding under forecast-at-settle (#244).
+// attribute_path is an opaque Tenant-policy key — not a parsed redaction DSL.
+message RedactedAttributeRef {
+  string event_id = 1; // non-blank
+  string attribute_path = 2; // non-blank; opaque Tenant-policy key (no DSL)
+}
+
+message Verdict {
+  string id = 1;
+  VerdictOutcome outcome = 2;
+  optional InconclusiveReason inconclusive_reason = 3;
+  VerdictAuthority authority = 4;
+  AssuranceEnvelope assurance = 5;
+}
